@@ -923,31 +923,45 @@ export class VaultSync {
 			}
 		}
 
-		const tombstonedPaths: string[] = [];
+		const tombstonedDiskConflicts: TombstonedDiskConflict[] = [];
 
 		// Disk files not in CRDT
 		for (const path of diskPresentPaths) {
-			if (crdtPaths.has(path)) continue;
+			const classification = classifyDiskPathForReconcile(
+				path,
+				crdtPaths.has(path),
+				this._deletedPathIndex.has(path),
+				mode,
+			);
 
-			if (this._deletedPathIndex.has(path)) {
-				this.log(`reconcile: "${path}" was tombstoned, skipping`);
-				tombstonedPaths.push(path);
-				skipped++;
-				continue;
-			}
+			switch (classification.action) {
+				case "skip-in-crdt":
+					// Already in CRDT, handled above
+					continue;
 
-			if (mode === "authoritative") {
-				const content = diskFiles.get(path);
-				if (content === undefined) {
-					// Presence is known, but content wasn't read this pass. Skip seeding
-					// to avoid accidentally creating empty/incorrect files.
-					this.log(`reconcile: "${path}" present on disk but content not loaded, skipping seed`);
+				case "tombstone-conflict":
+					// Disk file exists at a tombstoned path — zombie prevention
+					this.log(`reconcile: "${path}" exists on disk but is tombstoned in CRDT — conflict preserved`);
+					tombstonedDiskConflicts.push(classification.conflict!);
+					skipped++;
+					continue;
+
+				case "seed-to-crdt": {
+					const content = diskFiles.get(path);
+					if (content === undefined) {
+						// Presence is known, but content wasn't read this pass. Skip seeding
+						// to avoid accidentally creating empty/incorrect files.
+						this.log(`reconcile: "${path}" present on disk but content not loaded, skipping seed`);
+						continue;
+					}
+					this.ensureFile(path, content, device);
+					seededToCrdt.push(path);
 					continue;
 				}
-				this.ensureFile(path, content, device);
-				seededToCrdt.push(path);
-			} else {
-				untracked.push(path);
+
+				case "untracked":
+					untracked.push(path);
+					continue;
 			}
 		}
 
@@ -961,10 +975,10 @@ export class VaultSync {
 			`${createdOnDisk.length} need disk creation, ` +
 			`${updatedOnDisk.length} need disk update, ` +
 			`${untracked.length} untracked, ` +
-			`${skipped} tombstoned`,
+			`${tombstonedDiskConflicts.length} tombstoned-disk conflicts`,
 		);
 
-		return { mode, createdOnDisk, updatedOnDisk, seededToCrdt, untracked, tombstonedPaths, skipped };
+		return { mode, createdOnDisk, updatedOnDisk, seededToCrdt, untracked, tombstonedDiskConflicts, skipped };
 	}
 
 	// -------------------------------------------------------------------
@@ -1334,6 +1348,9 @@ export class VaultSync {
 	private applyRenameBatch(batch: Map<string, string>, device?: string): void {
 		if (batch.size === 0) return;
 
+		// Collect file IDs before the transaction for flight events.
+		const renamedIds: Array<{ oldPath: string; newPath: string; fileId: string }> = [];
+
 		this.ydoc.transact(() => {
 			for (const [oldPath, newPath] of batch) {
 				const fileId = this.getFileId(oldPath);
@@ -1345,6 +1362,7 @@ export class VaultSync {
 					this.clearMarkdownTombstonesForPath(newPath, fileId);
 					this.setMetaActive(fileId, newPath, device);
 					this.log(`renameBatch: "${oldPath}" -> "${newPath}" (id=${fileId})`);
+					renamedIds.push({ oldPath, newPath, fileId });
 				}
 
 				const blobRef = this.pathToBlob.get(oldPath);
@@ -1360,6 +1378,22 @@ export class VaultSync {
 		}, ORIGIN_SEED);
 
 		this._pathIndexesDirty = true;
+
+		// Emit crdt.file.renamed for each markdown file that was renamed.
+		for (const { newPath, fileId } of renamedIds) {
+			this.onFlightPathEvent?.({
+				priority: "important",
+				kind: FLIGHT_KIND.crdtFileRenamed,
+				severity: "info",
+				scope: "file",
+				source: "vaultSync",
+				layer: "crdt",
+				path: newPath,
+				fileId,
+				data: { batchSize: batch.size },
+			});
+		}
+
 		this._onRenameBatchFlushed?.(batch);
 	}
 
@@ -1783,13 +1817,67 @@ export class VaultSync {
 	}
 }
 
+export interface TombstonedDiskConflict {
+	path: string;
+	action: "preserved-local-only";
+	reason: "disk-present-at-tombstoned-path";
+}
+
 export interface ReconcileResult {
 	mode: ReconcileMode;
 	createdOnDisk: string[];
 	updatedOnDisk: string[];
 	seededToCrdt: string[];
 	untracked: string[];
-	/** Disk paths that were tombstoned in CRDT and skipped. */
-	tombstonedPaths: string[];
+	/**
+	 * Disk files that exist at tombstoned paths.
+	 * These are preserved locally but not synced.
+	 * User should resolve manually or via explicit create action.
+	 */
+	tombstonedDiskConflicts: TombstonedDiskConflict[];
 	skipped: number;
+}
+
+/**
+ * Pure function to classify a disk path during reconciliation.
+ * Exported for testing.
+ *
+ * @param path - The disk file path to classify
+ * @param crdtHasPath - Whether the CRDT has an active (non-deleted) entry for this path
+ * @param isTombstoned - Whether the path is tombstoned in the CRDT
+ * @param mode - The reconciliation mode
+ * @returns The classification decision
+ */
+export function classifyDiskPathForReconcile(
+	path: string,
+	crdtHasPath: boolean,
+	isTombstoned: boolean,
+	mode: ReconcileMode,
+): {
+	action: "skip-in-crdt" | "tombstone-conflict" | "seed-to-crdt" | "untracked";
+	conflict?: TombstonedDiskConflict;
+} {
+	// Already in CRDT — skip
+	if (crdtHasPath) {
+		return { action: "skip-in-crdt" };
+	}
+
+	// Tombstoned in CRDT — do NOT revive (zombie prevention)
+	if (isTombstoned) {
+		return {
+			action: "tombstone-conflict",
+			conflict: {
+				path,
+				action: "preserved-local-only",
+				reason: "disk-present-at-tombstoned-path",
+			},
+		};
+	}
+
+	// Not in CRDT — seed if authoritative, otherwise untracked
+	if (mode === "authoritative") {
+		return { action: "seed-to-crdt" };
+	}
+
+	return { action: "untracked" };
 }

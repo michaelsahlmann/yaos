@@ -202,6 +202,8 @@ export class ReconciliationController {
 	private lastMarkdownDirtyAt = 0;
 	private boundRecoveryLocks = new Map<string, number>();
 	private recoveryFingerprints = new Map<string, { fingerprint: string; count: number; lastAt: number }>();
+	/** QA-ONLY: in-memory external edit policy override. Never persisted. */
+	private __qaExternalEditPolicyOverride: import("../settings").ExternalEditPolicy | null = null;
 	private lastConflictFingerprints = new Map<string, string>();
 	private blockedDivergenceCount = 0;
 	private lastBlockedDivergenceAt: string | null = null;
@@ -532,7 +534,7 @@ export class ReconciliationController {
 					},
 				});
 			}
-			for (const path of result.tombstonedPaths ?? []) {
+			for (const conflict of result.tombstonedDiskConflicts ?? []) {
 				this.deps.recordFlightPathEvent?.({
 					priority: "important",
 					kind: FLIGHT_KIND.reconcileFileDecision,
@@ -540,11 +542,12 @@ export class ReconciliationController {
 					scope: "file",
 					source: "reconciliationController",
 					layer: "reconcile",
-					path,
+					path: conflict.path,
 					data: {
 						decision: "skip-tombstoned",
-						reason: "path-tombstoned-in-crdt",
-						conflictRisk: "none",
+						reason: conflict.reason,
+						action: conflict.action,
+						conflictRisk: "tombstone-disk-conflict",
 					},
 				});
 			}
@@ -869,6 +872,33 @@ export class ReconciliationController {
 		this.scheduleMarkdownDrain();
 	}
 
+	/**
+	 * Redirect a pending dirty create/modify from oldPath to newPath.
+	 *
+	 * Called by the rename batch flush callback when a rename arrives before
+	 * YAOS has processed the create event for oldPath (the Templater race).
+	 * In that case:
+	 *   1. applyRenameBatch found no fileId for oldPath → rename dropped.
+	 *   2. processDirtyMarkdownPath(oldPath) later finds oldPath gone → skipped.
+	 *   3. newPath never gets ensureFile → CRDT entry never created.
+	 *
+	 * This method ensures the pending create is redirected to newPath so it
+	 * is processed by syncFileFromDisk at the correct final location.
+	 */
+	redirectPendingCreate(oldPath: string, newPath: string): void {
+		const entry = this.dirtyMarkdownPaths.get(oldPath);
+		if (!entry) return;
+		this.dirtyMarkdownPaths.delete(oldPath);
+		// Only redirect creates — a pending modify for a non-existent old path
+		// would fail anyway. The new path will have its own create event.
+		if (entry.reason !== "create") return;
+		if (!this.dirtyMarkdownPaths.has(newPath)) {
+			this.dirtyMarkdownPaths.set(newPath, entry);
+			this.deps.log(`redirectPendingCreate: "${oldPath}" -> "${newPath}" (race recovery)`);
+			this.scheduleMarkdownDrain();
+		}
+	}
+
 	maybeImportDeferredClosedOnlyPath(path: string, reason: string): void {
 		if (!this.reconciled) return;
 		if (this.deps.getRuntimeConfig().externalEditPolicy !== "closed-only") return;
@@ -1001,7 +1031,8 @@ export class ReconciliationController {
 			wasBound = false;
 		}
 
-		const policyDecision = decideExternalEditImport(runtimeConfig.externalEditPolicy, isOpenInEditor);
+		const effectivePolicy = this.__qaExternalEditPolicyOverride ?? runtimeConfig.externalEditPolicy;
+		const policyDecision = decideExternalEditImport(effectivePolicy, isOpenInEditor);
 		if (!policyDecision.allowImport) {
 			const reason = policyDecision.reason === "policy-never"
 				? "external edit policy: never"
@@ -1100,6 +1131,49 @@ export class ReconciliationController {
 		} catch (err) {
 			console.error(`[yaos] syncFileFromDisk failed for "${file.path}":`, err);
 		}
+	}
+
+	/**
+	 * QA-ONLY. Unsafe. Do not call from production code.
+	 *
+	 * Forces a disk→CRDT sync pass for a single path, deterministically
+	 * exercising editor-bound recovery paths without waiting for a real
+	 * filesystem event. Used only in forced-recovery regression scenarios.
+	 */
+	async __qaOnlyForceSyncFileFromDiskUnsafe(path: string, reason: "create" | "modify" = "modify"): Promise<void> {
+		const abstractFile = this.deps.app.vault.getAbstractFileByPath(path);
+		if (!(abstractFile instanceof TFile)) {
+			throw new Error(`__qaOnlyForceSyncFileFromDiskUnsafe: not a file: ${path}`);
+		}
+		await this.syncFileFromDisk(abstractFile, reason);
+	}
+
+	/** QA-ONLY. Unsafe. Pause editor->CRDT propagation while keeping bound state. */
+	__qaOnlyPauseEditorBindingPropagationUnsafe(path: string): boolean {
+		return this.deps.getEditorBindings()?.__qaOnlyPauseBindingPropagationUnsafe(path) ?? false;
+	}
+
+	/** QA-ONLY. Unsafe. Resume editor->CRDT propagation after a pause. */
+	__qaOnlyResumeEditorBindingPropagationUnsafe(path: string): boolean {
+		return this.deps.getEditorBindings()?.__qaOnlyResumeBindingPropagationUnsafe(
+			path,
+			this.deps.getSettings().deviceName,
+		) ?? false;
+	}
+
+	/**
+	 * QA-ONLY. Unsafe. Sets an in-memory-only override for the external edit policy.
+	 * Does NOT persist, does NOT push update metadata, does NOT dirty settings.
+	 * Returns the previous effective policy (override or real setting).
+	 * Pass null to clear the override.
+	 */
+	__qaOnlySetExternalEditPolicyOverrideUnsafe(
+		policy: import("../settings").ExternalEditPolicy | null,
+	): import("../settings").ExternalEditPolicy {
+		const previous = this.__qaExternalEditPolicyOverride
+			?? this.deps.getRuntimeConfig().externalEditPolicy;
+		this.__qaExternalEditPolicyOverride = policy;
+		return previous;
 	}
 
 	private getOpenMarkdownViewsForPath(path: string): MarkdownView[] {
@@ -1215,23 +1289,28 @@ export class ReconciliationController {
 					diskLength: content.length,
 					crdtLength: crdtContent?.length ?? null,
 				});
-				// recovery.decision: emit before quarantine check so even quarantined cases are visible
-				this.deps.recordFlightPathEvent?.({
-					priority: "important",
-					kind: FLIGHT_KIND.recoveryDecision,
-					severity: "info",
-					scope: "file",
-					source: "reconciliationController",
-					layer: "recovery",
-					path: file.path,
-					data: {
-						reason: "bound-file-local-only-divergence",
-						signature: recoverySignature("bound-file-local-only-divergence", crdtContent ?? "", content),
-						action: "apply-diff",
-						diskLength: content.length,
-						crdtLength: crdtContent?.length ?? null,
-					},
-				});
+			// recovery.decision: emit before quarantine check so even quarantined cases are visible
+			this.deps.recordFlightPathEvent?.({
+				priority: "important",
+				kind: FLIGHT_KIND.recoveryDecision,
+				severity: "info",
+				scope: "file",
+				source: "reconciliationController",
+				layer: "recovery",
+				path: file.path,
+				data: {
+					reason: "bound-file-local-only-divergence",
+					signature: recoverySignature("bound-file-local-only-divergence", crdtContent ?? "", content),
+					action: "apply-diff",
+					diskLength: content.length,
+					crdtLength: crdtContent?.length ?? null,
+					// Branch predicates — makes traces self-documenting
+					editorEqualsDisk: localOnlyViews.length > 0,
+					editorEqualsCrdt: false,
+					diskFingerprintPrefix: contentFingerprint(content).slice(0, 8),
+					crdtFingerprintPrefix: crdtContent ? contentFingerprint(crdtContent).slice(0, 8) : null,
+				},
+			});
 				if (this.shouldQuarantineRepeatedRecovery(
 					file.path,
 					"bound-file-local-only-divergence",
@@ -1404,22 +1483,27 @@ export class ReconciliationController {
 					`syncFileFromDisk: recovering "${file.path}" ` +
 					`(editor-bound external disk edit while idle: ${crdtContent?.length ?? 0} -> ${content.length} chars)`,
 				);
-				this.deps.recordFlightPathEvent?.({
-					priority: "important",
-					kind: FLIGHT_KIND.recoveryDecision,
-					severity: "info",
-					scope: "file",
-					source: "reconciliationController",
-					layer: "recovery",
-					path: file.path,
-					data: {
-						reason: "bound-file-open-idle-disk-recovery",
-						signature: recoverySignature("bound-file-open-idle-disk-recovery", crdtContent ?? "", content),
-						action: "apply-diff",
-						diskLength: content.length,
-						crdtLength: crdtContent?.length ?? null,
-					},
-				});
+			this.deps.recordFlightPathEvent?.({
+				priority: "important",
+				kind: FLIGHT_KIND.recoveryDecision,
+				severity: "info",
+				scope: "file",
+				source: "reconciliationController",
+				layer: "recovery",
+				path: file.path,
+				data: {
+					reason: "bound-file-open-idle-disk-recovery",
+					signature: recoverySignature("bound-file-open-idle-disk-recovery", crdtContent ?? "", content),
+					action: "apply-diff",
+					diskLength: content.length,
+					crdtLength: crdtContent?.length ?? null,
+					// Branch predicates
+					editorEqualsDisk: false,
+					editorEqualsCrdt: crdtOnlyViews.length > 0,
+					diskFingerprintPrefix: contentFingerprint(content).slice(0, 8),
+					crdtFingerprintPrefix: crdtContent ? contentFingerprint(crdtContent).slice(0, 8) : null,
+				},
+			});
 				if (this.shouldQuarantineRepeatedRecovery(
 					file.path,
 					"bound-file-open-idle-disk-recovery",
