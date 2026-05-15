@@ -41,7 +41,7 @@ export class ObsidianClient {
 	constructor(opts: ObsidianClientOptions = {}) {
 		this.port = opts.port ?? 9222;
 		this.host = opts.host ?? "localhost";
-		this.connectTimeoutMs = opts.connectTimeoutMs ?? 15_000;
+		this.connectTimeoutMs = opts.connectTimeoutMs ?? 60_000;
 	}
 
 	async connect(): Promise<void> {
@@ -154,8 +154,10 @@ export class ObsidianClient {
 			(async () => {
 				const qa = window.__YAOS_QA__;
 				if (!qa) throw new Error('__YAOS_QA__ not found');
+				// Export while trace is still active, then stop.
+				const path = await qa.exportTrace(${JSON.stringify(privacy)});
 				await qa.stopTrace();
-				return qa.exportTrace(${JSON.stringify(privacy)});
+				return path;
 			})()
 		`);
 		return result;

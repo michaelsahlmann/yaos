@@ -58,6 +58,11 @@ import {
 	s08cBulkNested,
 	s08dBulkMixed,
 } from "./scenarios/s08-bulk-import";
+import { s10aPassiveDeviceNoStaleEcho } from "./scenarios/s10a-passive-device-no-stale-echo";
+import { s10bPassiveDeletionSoak } from "./scenarios/s10b-passive-deletion-soak";
+import { s10cDisableReenablePreservesEdits } from "./scenarios/s10c-disable-reenable-preserves-edits";
+import { s10dRecoveryAmplifierOrchestration } from "./scenarios/s10d-recovery-amplifier-orchestration";
+import { s10gSuppressionDelayRace } from "./scenarios/s10g-suppression-delay-race";
 
 const ALL_SCENARIOS: QaScenario[] = [
 	s01SingleDeviceBasicEdit,
@@ -97,6 +102,12 @@ const ALL_SCENARIOS: QaScenario[] = [
 	s09aRenameIntoExcluded,
 	s09bRenameFromExcluded,
 	s09cRenameToVacatedPath,
+	// S10: Issue #22 regression family
+	s10aPassiveDeviceNoStaleEcho,
+	s10bPassiveDeletionSoak,
+	s10cDisableReenablePreservesEdits,
+	s10dRecoveryAmplifierOrchestration,
+	s10gSuppressionDelayRace,
 ];
 
 export default class YaosQaHarnessPlugin extends Plugin {
