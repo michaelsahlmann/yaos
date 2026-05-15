@@ -82,6 +82,7 @@ const suites = [
 	[JITI, "tests/flight-recorder.ts"],
 	[JITI, "tests/flight-trace-privacy.ts"],
 	[JITI, "tests/flight-lifecycle-local-disk-to-server-receipt.ts"],
+	[JITI, "tests/server-persistence-pathology.ts"],
 ];
 
 let totalPassed = 0;
