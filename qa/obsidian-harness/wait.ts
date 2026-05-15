@@ -9,6 +9,7 @@ import type { YaosQaDebugApi } from "../../src/qaDebugApi";
 const DEFAULT_IDLE_TIMEOUT = 15_000;
 const DEFAULT_RECEIPT_TIMEOUT = 30_000;
 const DEFAULT_FILE_TIMEOUT = 15_000;
+const DEFAULT_BINDING_TIMEOUT = 5_000;
 const POLL_INTERVAL = 250;
 
 export function sleep(ms: number): Promise<void> {
@@ -61,6 +62,42 @@ export function waitForFile(
 	return yaos.waitForFile(path, timeoutMs);
 }
 
+/**
+ * Wait until the CRDT hash for a file matches its disk hash.
+ *
+ * `waitForCrdtFile` only waits for CRDT to be non-null (file seeded).
+ * `waitForDiskCrdtConverge` waits for the *latest* disk write to be
+ * reflected in the CRDT — required after modifyFile/appendToFile when
+ * the file is already in CRDT and you need to assert on final content.
+ */
+export function waitForDiskCrdtConverge(
+	yaos: YaosQaDebugApi,
+	path: string,
+	timeoutMs = DEFAULT_FILE_TIMEOUT,
+): Promise<void> {
+	return waitForCondition(
+		async () => {
+			const disk = await yaos.getDiskHash(path);
+			const crdt = await yaos.getCrdtHash(path);
+			return disk !== null && crdt !== null && disk === crdt;
+		},
+		timeoutMs,
+		`waitForDiskCrdtConverge(${path})`,
+	);
+}
+
+export function waitForCrdtFile(
+	yaos: YaosQaDebugApi,
+	path: string,
+	timeoutMs = DEFAULT_FILE_TIMEOUT,
+): Promise<void> {
+	return waitForCondition(
+		async () => (await yaos.getCrdtHash(path)) !== null,
+		timeoutMs,
+		`waitForCrdtFile(${path})`,
+	);
+}
+
 export function waitForFileContent(
 	app: App,
 	yaos: YaosQaDebugApi,
@@ -75,5 +112,62 @@ export function waitForFileContent(
 		},
 		timeoutMs,
 		`waitForFileContent(${path})`,
+	);
+}
+
+/**
+ * Wait until the CRDT editor binding for a path is fully healthy:
+ *   1. A MarkdownView leaf for the path is open.
+ *   2. The CM6 ySyncFacet is configured on the editor.
+ *   3. The ySyncFacet's Y.Text matches the expected CRDT Y.Text.
+ *
+ * This is stronger than `waitForActiveMarkdownLeaf`, which only proves a leaf
+ * is open. Use this in tests that depend on editor↔CRDT binding health
+ * (e.g. issue-25 recovery scenarios, open-editor mutation tests).
+ *
+ * NOTE: The settle window (~750ms) means that even after this resolves,
+ * you may want a brief sleep before performing binding-sensitive operations.
+ */
+export function waitForCrdtBinding(
+	yaos: YaosQaDebugApi,
+	path: string,
+	timeoutMs = 10_000,
+): Promise<void> {
+	return waitForCondition(
+		() => {
+			const h = yaos.getEditorBindingHealth(path);
+			return h.healthy;
+		},
+		timeoutMs,
+		`waitForCrdtBinding(${path})`,
+	);
+}
+
+/**
+ * Wait until a MarkdownView leaf for path is active in the workspace.
+ *
+ * NOTE: This proves a Markdown leaf with the file is open, NOT that the
+ * y-codemirror editor binding to CRDT is healthy. These are different facts.
+ * An open leaf can exist before the y-codemirror collab facet is configured.
+ * Use `waitForCrdtBinding` instead when you need binding health proof.
+ *
+ * Rename of this function from `waitForEditorBinding` is intentional —
+ * the old name was a lie-by-comment.
+ */
+export function waitForActiveMarkdownLeaf(
+	app: App,
+	yaos: YaosQaDebugApi,
+	path: string,
+	timeoutMs = DEFAULT_BINDING_TIMEOUT,
+): Promise<void> {
+	return waitForCondition(
+		() => {
+			// getEditorHash returns non-null only when a leaf with this file is open.
+			// We additionally check that the CRDT is bound (disk hash reachable too).
+			const activePaths = yaos.getActiveMarkdownPaths();
+			return activePaths.some((p) => p === path);
+		},
+		timeoutMs,
+		`waitForActiveMarkdownLeaf(${path})`,
 	);
 }

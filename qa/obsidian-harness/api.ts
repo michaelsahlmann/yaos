@@ -14,7 +14,8 @@ import type {
 	VaultManifest,
 	ManifestDiff,
 } from "./types";
-import { sleep, waitForIdle, waitForMemoryReceipt, waitForFile } from "./wait";
+import { analyzeTrace } from "../analyzers/analyzer";
+import { sleep, waitForIdle, waitForMemoryReceipt, waitForFile, waitForCrdtFile, waitForDiskCrdtConverge, waitForActiveMarkdownLeaf, waitForCrdtBinding } from "./wait";
 import {
 	createFile,
 	modifyFile,
@@ -57,6 +58,8 @@ function buildContext(app: App): QaContext {
 		app,
 		yaos,
 
+		phase: (name) => yaos.__qaOnlyEmitPhaseUnsafe(name),
+
 		createFile: (path, content) => createFile(app, path, content),
 		modifyFile: (path, content) => modifyFile(app, path, content),
 		appendToFile: (path, text) => appendToFile(app, path, text),
@@ -75,6 +78,10 @@ function buildContext(app: App): QaContext {
 		waitForIdle: (ms) => waitForIdle(yaos, ms ?? DEFAULT_IDLE_TIMEOUT),
 		waitForMemoryReceipt: (ms) => waitForMemoryReceipt(yaos, ms ?? DEFAULT_RECEIPT_TIMEOUT),
 		waitForFile: (path, ms) => waitForFile(yaos, path, ms ?? DEFAULT_FILE_TIMEOUT),
+		waitForCrdtFile: (path, ms) => waitForCrdtFile(yaos, path, ms),
+		waitForDiskCrdtConverge: (path, ms) => waitForDiskCrdtConverge(yaos, path, ms),
+		waitForActiveMarkdownLeaf: (path, ms) => waitForActiveMarkdownLeaf(app, yaos, path, ms),
+		waitForCrdtBinding: (path, ms) => waitForCrdtBinding(yaos, path, ms),
 		sleep,
 
 		assert: {
@@ -93,40 +100,43 @@ export function buildQaConsoleApi(app: App, scenarioRegistry: Map<string, QaScen
 	const api: QaConsoleApi = {
 		help(): void {
 			const methods = [
-				"help()                             — show this message",
-				"scenarios()                        — list registered scenario IDs",
-				"run(id, opts?)                     — run a scenario",
-				"createFile(path, content)          — create/overwrite via Obsidian API",
-				"modifyFile(path, content)          — modify via Obsidian API",
-				"appendToFile(path, text)           — append via Obsidian API",
-				"deleteFile(path)                   — delete via Obsidian API",
-				"renameFile(old, new)               — rename via Obsidian API",
-			"writeAdapterFile(path, content)    — write via Obsidian adapter (NOT real external; use Node controller for true external)",
-			"deleteAdapterFile(path)            — delete via Obsidian adapter",
-				"openFile(path)                     — open in MarkdownView",
-				"closeFile(path)                    — close leaf",
-				"typeIntoFile(path, text)           — type character-by-character into editor",
-				"replaceFileContent(path, content)  — editor.setValue() (blunt — setup only)",
-				"runCommand(commandId)              — execute Obsidian command",
-				"waitForIdle(ms?)                   — wait for YAOS idle state",
-				"yaos.getReceiptSnapshot()          — snapshot receipt state before an action",
-			"yaos.waitForReceiptAfter(ts, ms)   — action-relative receipt wait (preferred)",
-			"yaos.disconnectProvider(reason?)   — real offline disconnect",
-			"yaos.connectProvider(reason?)      — reconnect provider",
-			"yaos.waitForProviderDisconnected(ms) — wait for confirmed disconnect",
-			"waitForMemoryReceipt(ms?)          — [deprecated] global receipt wait (use yaos.waitForReceiptAfter)",
-				"waitForFile(path, ms?)             — wait for file to appear on disk",
-				"assertFileExists(path)             — throws if not found",
-				"assertFileNotExists(path)          — throws if found",
-				"assertFileHash(path, hash)         — throws if disk hash mismatches",
-				"assertDiskEqualsCrdt(path)         — throws if disk ≠ CRDT",
-				"assertNoConflictCopies(dir?)       — throws if conflict copies found",
-				"manifest()                         — snapshot current vault",
-				"compareManifest(expected)          — diff two manifests",
-				"startTrace(mode?, secret?)         — start QA flight trace",
-				"stopTrace()                        — stop flight trace",
-				"exportTrace(privacy?)              — export flight trace (returns path)",
-				"plugins()                          — list installed plugins",
+				"help()                               — show this message",
+				"scenarios()                          — list registered scenario IDs",
+				"run(id, opts?)                       — run a scenario (returns QaResult with scenarioPassed+analyzerPassed)",
+				"createFile(path, content)            — create/overwrite via Obsidian API",
+				"modifyFile(path, content)            — modify via Obsidian API",
+				"appendToFile(path, text)             — append via Obsidian API",
+				"deleteFile(path)                     — delete via Obsidian API",
+				"renameFile(old, new)                 — rename via Obsidian API",
+				"writeAdapterFile(path, content)      — write via Obsidian adapter (NOT real external)",
+				"deleteAdapterFile(path)              — delete via Obsidian adapter",
+				"openFile(path)                       — open in MarkdownView",
+				"closeFile(path)                      — close leaf",
+				"typeIntoFile(path, text)             — type character-by-character into editor",
+				"replaceFileContent(path, content)    — editor.setValue() (blunt — setup only)",
+				"runCommand(commandId)                — execute Obsidian command",
+				"waitForIdle(ms?)                     — wait for YAOS idle state",
+				"yaos.getReceiptSnapshot()            — snapshot receipt state before an action",
+				"yaos.waitForReceiptAfter(ts, ms)     — action-relative receipt wait (preferred)",
+				"yaos.disconnectProvider(reason?)     — real offline disconnect",
+				"yaos.connectProvider(reason?)        — reconnect provider",
+				"yaos.waitForProviderDisconnected(ms) — wait for confirmed disconnect",
+				"waitForMemoryReceipt(ms?)            — [deprecated] global receipt wait",
+				"waitForFile(path, ms?)               — wait for file to appear on disk",
+				"waitForCrdtBinding(path, ms?)         — wait for healthy CRDT editor binding",
+				"assertFileExists(path)               — throws if not found",
+				"assertFileNotExists(path)            — throws if found",
+				"assertFileHash(path, hash)           — throws if disk hash mismatches",
+				"assertDiskEqualsCrdt(path)           — throws if disk ≠ CRDT",
+				"assertNoConflictCopies(dir?)         — throws if conflict copies found",
+				"manifest()                           — snapshot current vault",
+				"compareManifest(expected)            — diff two manifests",
+				"startTrace(recordingMode?, secret?)  — start QA flight trace",
+				"stopTrace()                          — stop flight trace",
+				"exportTrace(exportPrivacy?)          — export flight trace (returns path)",
+				"analyzeTrace(tracePath, scenarioId?) — run analyzer on a trace file",
+				"exportTraceWithAnalyzer(privacy?)    — export + analyze in one call",
+				"plugins()                            — list installed plugins",
 			];
 			console.log("[YAOS QA]\n" + methods.join("\n"));
 		},
@@ -138,32 +148,127 @@ export function buildQaConsoleApi(app: App, scenarioRegistry: Map<string, QaScen
 		async run(id, opts?: QaRunOptions): Promise<QaResult> {
 			const scenario = scenarioRegistry.get(id);
 			if (!scenario) {
-				return { id, passed: false, durationMs: 0, errors: [`Unknown scenario: ${id}`], warnings: [] };
+				return {
+					id,
+					passed: false,
+					scenarioPassed: false,
+					analyzerPassed: false,
+					durationMs: 0,
+					errors: [`Unknown scenario: ${id}`],
+					warnings: [],
+					tracePath: null,
+					analyzerReport: null,
+				};
 			}
+
 			const ctx = buildContext(app);
 			const errors: string[] = [];
 			const warnings: string[] = [];
 			const start = Date.now();
 
+			// Recording mode and export privacy are separate concepts.
+			const recordingMode = scenario.traceRecordingMode ?? "qa-safe";
+			const exportPrivacy: "safe" | "full" = scenario.traceExportPrivacy ?? "safe";
+
+			let tracePath: string | null = null;
+			let analyzerReport: unknown = null;
+			let analyzerPassed = true; // assume pass unless analyzer explicitly fails
+
+			// Phase: start trace BEFORE setup so all events are captured.
+			// Stop any previously running trace first to prevent event bleed.
+			try {
+				await api.stopTrace();
+			} catch {
+				// ignore — no trace was running
+			}
+			try {
+				await api.startTrace(recordingMode);
+			} catch (traceStartErr) {
+				warnings.push(`trace start failed: ${String(traceStartErr)}`);
+			}
+
+			// Phase: setup
+			await ctx.phase("setup");
 			try {
 				await scenario.setup(ctx);
-				await scenario.run(ctx);
-				await scenario.assert(ctx);
-			} catch (err) {
-				errors.push(err instanceof Error ? err.message : String(err));
-			} finally {
+			} catch (setupErr) {
+				errors.push(`setup: ${setupErr instanceof Error ? setupErr.message : String(setupErr)}`);
+			}
+
+			// Phase: run + assert (only if setup succeeded)
+			if (errors.length === 0) {
+				await ctx.phase("run");
 				try {
-					await scenario.cleanup?.(ctx);
-				} catch (cleanErr) {
-					warnings.push(`cleanup error: ${String(cleanErr)}`);
+					await scenario.run(ctx);
+				} catch (runErr) {
+					errors.push(runErr instanceof Error ? runErr.message : String(runErr));
+				}
+
+				await ctx.phase("assert");
+				try {
+					await scenario.assert(ctx);
+				} catch (assertErr) {
+					errors.push(assertErr instanceof Error ? assertErr.message : String(assertErr));
 				}
 			}
 
+			const scenarioPassed = errors.length === 0;
+
+			// Phase: cleanup marker — emitted BEFORE trace export so analyzers
+			// can see the phase boundary and know that events after this point
+			// are intentional teardown (expected tombstones, deletes, etc.).
+			// The actual cleanup() call runs AFTER export so teardown events
+			// themselves are not included in the scenario trace.
+			await ctx.phase("cleanup");
+
+			// Phase: export trace + analyze.
+			try {
+			const bundle = await api.exportTraceWithAnalyzer(exportPrivacy, scenario.id);
+				tracePath = bundle.tracePath;
+				analyzerReport = bundle.report;
+				const reportPassed = (analyzerReport as { passed?: boolean } | null)?.passed;
+				analyzerPassed = reportPassed !== false; // null/undefined = no finding = pass
+				console.log(`[YAOS QA] Trace exported: ${tracePath}`);
+				console.log("[YAOS QA] Analyzer report:", analyzerReport);
+				if (!analyzerPassed) {
+					warnings.push("analyzer found hard failures in trace");
+				}
+			} catch (traceErr) {
+				warnings.push(`trace export/analyzer failed: ${String(traceErr)}`);
+			}
+
+			// Run actual cleanup — outside trace window (after export).
+			try {
+				await scenario.cleanup?.(ctx);
+			} catch (cleanErr) {
+				warnings.push(`cleanup: ${String(cleanErr)}`);
+			}
+
+			// passed = BOTH scenario assertions AND analyzer must pass.
+			const passed = scenarioPassed && analyzerPassed;
 			const durationMs = Date.now() - start;
-			const passed = errors.length === 0;
-			const result: QaResult = { id, passed, durationMs, errors, warnings };
+
+			const result: QaResult = {
+				id,
+				passed,
+				scenarioPassed,
+				analyzerPassed,
+				durationMs,
+				errors,
+				warnings,
+				tracePath,
+				analyzerReport,
+			};
+
 			const icon = passed ? "✓" : "✗";
-			console.log(`[YAOS QA] ${icon} ${id} (${durationMs}ms)${errors.length ? "\n  " + errors.join("\n  ") : ""}`);
+			const failParts: string[] = [];
+			if (!scenarioPassed) failParts.push(`scenario(${errors.length} errors)`);
+			if (!analyzerPassed) failParts.push("analyzer");
+			const suffix = passed ? "" : ` [${failParts.join(", ")}]`;
+			console.log(
+				`[YAOS QA] ${icon} ${id} (${durationMs}ms)${suffix}` +
+				(errors.length ? "\n  " + errors.join("\n  ") : ""),
+			);
 			return result;
 		},
 
@@ -187,6 +292,10 @@ export function buildQaConsoleApi(app: App, scenarioRegistry: Map<string, QaScen
 		waitForIdle: (ms) => waitForIdle(getYaos(), ms ?? DEFAULT_IDLE_TIMEOUT),
 		waitForMemoryReceipt: (ms) => waitForMemoryReceipt(getYaos(), ms ?? DEFAULT_RECEIPT_TIMEOUT),
 		waitForFile: (path, ms) => waitForFile(getYaos(), path, ms ?? DEFAULT_FILE_TIMEOUT),
+		waitForCrdtFile: (path, ms) => waitForCrdtFile(getYaos(), path, ms),
+		waitForDiskCrdtConverge: (path, ms) => waitForDiskCrdtConverge(getYaos(), path, ms),
+		waitForActiveMarkdownLeaf: (path, ms) => waitForActiveMarkdownLeaf(app, getYaos(), path, ms),
+		waitForCrdtBinding: (path, ms) => waitForCrdtBinding(getYaos(), path, ms),
 
 		// Assertions
 		assertFileExists: (path) => assertFileExists(app, path),
@@ -203,14 +312,28 @@ export function buildQaConsoleApi(app: App, scenarioRegistry: Map<string, QaScen
 		},
 
 		// Flight trace
-		async startTrace(mode = "qa-safe", secret?: string): Promise<void> {
-			await getYaos().startFlightTrace(mode, secret);
+		async startTrace(recordingMode = "qa-safe", secret?: string): Promise<void> {
+			await getYaos().startFlightTrace(recordingMode, secret);
 		},
 		async stopTrace(): Promise<void> {
 			await getYaos().stopFlightTrace();
 		},
-		async exportTrace(privacy: "safe" | "full" = "safe"): Promise<string> {
-			return getYaos().exportFlightTrace(privacy);
+		async exportTrace(exportPrivacy: "safe" | "full" = "safe"): Promise<string> {
+			return getYaos().exportFlightTrace(exportPrivacy);
+		},
+
+		async analyzeTrace(tracePath: string, scenarioId?: string): Promise<unknown> {
+			const raw = await app.vault.adapter.read(tracePath);
+			return analyzeTrace(raw, { traceFile: tracePath, scenarioId });
+		},
+
+		async exportTraceWithAnalyzer(
+			exportPrivacy: "safe" | "full" = "safe",
+			scenarioId?: string,
+		): Promise<{ tracePath: string; report: unknown }> {
+			const tracePath = await getYaos().exportFlightTrace(exportPrivacy);
+			const report = await api.analyzeTrace(tracePath, scenarioId);
+			return { tracePath, report };
 		},
 
 		// Plugin state

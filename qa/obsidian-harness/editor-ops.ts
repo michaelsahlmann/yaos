@@ -23,11 +23,20 @@ export async function openFile(app: App, path: string): Promise<void> {
 
 export async function closeFile(app: App, path: string): Promise<void> {
 	const normalized = normalizePath(path);
+	const toDetach: ReturnType<typeof app.workspace.getLeaf>[] = [];
 	app.workspace.iterateAllLeaves((leaf) => {
-		if (leaf.view instanceof MarkdownView && leaf.view.file?.path === normalized) {
-			leaf.detach();
+		// Match by path, also detach leaves whose file was deleted (file=null)
+		// but whose last path matched — avoids stale binding-health-failed loops.
+		const leafPath = leaf.view instanceof MarkdownView
+			? (leaf.view.file?.path ?? (leaf.view as unknown as { _filePath?: string })._filePath)
+			: null;
+		if (leaf.view instanceof MarkdownView && leafPath === normalized) {
+			toDetach.push(leaf);
 		}
 	});
+	for (const leaf of toDetach) {
+		leaf.detach();
+	}
 }
 
 function getViewForPath(app: App, path: string): MarkdownView {

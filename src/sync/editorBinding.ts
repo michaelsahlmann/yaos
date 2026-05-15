@@ -42,6 +42,8 @@ interface EditorBinding {
 	lastBoundAtMs: number;
 	lastEditorChangeAtMs: number;
 	settleWindowMs: number;
+	/** QA-only: when true, suppress binding health/heal work. */
+	qaPaused?: boolean;
 }
 
 export interface BindingDebugInfo {
@@ -704,6 +706,10 @@ export class EditorBindingManager {
 		view: MarkdownView,
 		binding: EditorBinding,
 	): BindingHealthCheck {
+		if (binding.qaPaused) {
+			// QA-only: treat as healthy so we don't auto-heal/rebind mid-scenario.
+			return { healthy: true, settling: false, issues: [], deferredIssues: [] };
+		}
 		const issues: string[] = [];
 		const deferredIssues: string[] = [];
 		const file = view.file;
@@ -766,6 +772,7 @@ export class EditorBindingManager {
 	): void {
 		if (this.healthWorkInFlight.has(leafId)) return;
 		if (this.bindings.get(leafId) !== binding) return;
+		if (binding.qaPaused) return;
 
 		const health = this.inspectBindingHealth(binding.view, binding);
 		if (health.healthy || health.settling) return;
@@ -846,6 +853,48 @@ export class EditorBindingManager {
 		} finally {
 			this.healthWorkInFlight.delete(leafId);
 		}
+	}
+
+	/**
+	 * QA-ONLY. Unsafe.
+	 *
+	 * Pauses editor<->CRDT propagation for an *already bound* path while keeping
+	 * the binding tracked as "bound". This is used to manufacture local-only
+	 * divergence states for branch-contract tests.
+	 */
+	__qaOnlyPauseBindingPropagationUnsafe(path: string): boolean {
+		let paused = false;
+		for (const binding of this.bindings.values()) {
+			if (binding.path !== path) continue;
+			binding.qaPaused = true;
+			paused = true;
+			try {
+				binding.cm.dispatch({
+					effects: this.compartment.reconfigure([]),
+				});
+			} catch {
+				// view may be destroyed
+			}
+		}
+		return paused;
+	}
+
+	/**
+	 * QA-ONLY. Unsafe.
+	 *
+	 * Resumes editor<->CRDT propagation for a previously paused bound path.
+	 */
+	__qaOnlyResumeBindingPropagationUnsafe(path: string, deviceName: string): boolean {
+		let resumed = false;
+		for (const binding of this.bindings.values()) {
+			if (binding.path !== path) continue;
+			if (!binding.qaPaused) continue;
+			binding.qaPaused = false;
+			resumed = true;
+			// Repair will reapply yCollab via compartment reconfigure.
+			this.repair(binding.view, deviceName, "qa-resume-binding-propagation");
+		}
+		return resumed;
 	}
 
 	private scheduleCmResolveRetry(

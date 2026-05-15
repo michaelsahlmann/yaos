@@ -43,3 +43,21 @@ qa-runs/
 
 # QA harness compiled plugin
 qa/obsidian-harness/main.js
+
+# TypeScript compilation artifacts (compiled .js next to .ts source)
+# Build outputs are not committed; only .ts source is tracked.
+qa/analyzers/*.js
+qa/analyzers/rules/*.js
+qa/obsidian-harness/*.js
+qa/obsidian-harness/scenarios/*.js
+src/debug/*.js
+src/runtime/*.js
+src/settings/*.js
+src/sync/*.js
+src/utils/*.js
+src/*.js
+tests/*.js
+
+# Temp/session artifacts
+25#.json
+review_25hash.json

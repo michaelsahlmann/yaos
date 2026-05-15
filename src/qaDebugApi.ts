@@ -11,12 +11,36 @@
  *   const hash = await api.getDiskHash("Notes/test.md");
  */
 
-import type { App } from "obsidian";
+import type { App, MarkdownView } from "obsidian";
 import type { VaultSync } from "./sync/vaultSync";
 import type { ReconciliationController } from "./runtime/reconciliationController";
 import type { ConnectionController } from "./runtime/connectionController";
 import type { FlightTraceController } from "./debug/flightTraceController";
+import type { EditorBindingManager } from "./sync/editorBinding";
+import { FLIGHT_KIND } from "./debug/flightEvents";
 import { yTextToString } from "./utils/format";
+import { forceReplaceYText } from "./sync/diff";
+
+/**
+ * Health report for the CRDT editor binding on a given path.
+ * Returned by getEditorBindingHealth(path).
+ */
+export interface EditorBindingHealth {
+	/** A MarkdownView leaf for this path is open in the workspace. */
+	leafOpen: boolean;
+	/** The leaf has an active EditorBinding registered in EditorBindingManager. */
+	bound: boolean;
+	/** The CM6 y-codemirror ySyncFacet is configured on the editor. */
+	hasSyncFacet: boolean;
+	/** The ySyncFacet's Y.Text is the same object as the CRDT Y.Text for this path. */
+	yTextMatchesExpected: boolean | null;
+	/** No known binding issues (bound + hasSyncFacet + yTextMatchesExpected). */
+	healthy: boolean;
+	/** Binding is settling (CM6 compartment update in progress — not yet unhealthy). */
+	settling: boolean;
+	/** Diagnostic issue tokens from the binding health check. */
+	issues: string[];
+}
 
 export interface ReceiptSnapshot {
 	/** Opaque ID of the current unconfirmed candidate. Null if none. */
@@ -72,9 +96,34 @@ export interface YaosQaDebugApi {
 	getCrdtHash(path: string): Promise<string | null>;
 	getEditorHash(path: string): Promise<string | null>;
 
+	/**
+	 * QA-ONLY. Unsafe. Do not call in production code.
+	 *
+	 * Forces CRDT Y.Text content for a path to an arbitrary value.
+	 * originClass "local" = treated as a local repair (DiskMirror will not
+	 * echo it back to disk). "remote" = treated as a remote write (DiskMirror
+	 * WILL write it to disk — use only if that is the intended behaviour).
+	 *
+	 * Returns hashes before and after so the caller can assert divergence.
+	 */
+	__qaOnlyForceCrdtContentUnsafe(
+		path: string,
+		content: string,
+		opts: { originClass: "local" | "remote"; createIfMissing?: boolean },
+	): Promise<{ beforeHash: string | null; afterHash: string | null; fileExisted: boolean }>;
+
 	// Path sets
 	getActiveMarkdownPaths(): string[];
 	getDiskMarkdownPaths(): string[];
+
+	/**
+	 * Returns the CRDT editor binding health for a given path.
+	 * Use this to verify that y-codemirror is fully bound and the CRDT Y.Text
+	 * matches the expected text — not just that a Markdown leaf is open.
+	 *
+	 * Prefer waitForCrdtBinding() in the harness when you need to wait for healthy.
+	 */
+	getEditorBindingHealth(path: string): EditorBindingHealth;
 
 	// Status
 	getServerReceiptState(): "confirmed" | "pending" | "unknown" | "no-candidate";
@@ -88,6 +137,41 @@ export interface YaosQaDebugApi {
 	// Force operations
 	forceReconcile(): Promise<void>;
 	forceReconnect(): void;
+	/**
+	 * QA-ONLY. Unsafe. Do not call in production code.
+	 *
+	 * Directly invokes syncFileFromDisk for a path. Deterministically
+	 * exercises the editor-bound recovery code path without waiting for
+	 * a real filesystem event. Use ONLY in forced-recovery regression
+	 * scenarios — NOT as a substitute for natural event-pipeline tests.
+	 */
+	__qaOnlyForceSyncFileFromDiskUnsafe(path: string, reason?: "create" | "modify"): Promise<void>;
+
+	/** QA-ONLY. Unsafe. Pause editor->CRDT propagation for a bound path. */
+	__qaOnlyPauseEditorBindingPropagationUnsafe(path: string): Promise<boolean>;
+	/** QA-ONLY. Unsafe. Resume editor->CRDT propagation for a bound path. */
+	__qaOnlyResumeEditorBindingPropagationUnsafe(path: string): Promise<boolean>;
+
+	/**
+	 * QA-ONLY. Unsafe.
+	 *
+	 * Emits a qa.phase flight event marking the start of a scenario lifecycle
+	 * phase (setup/run/assert/cleanup). Analyzers use these markers to scope
+	 * their assertions — e.g. tombstones after "cleanup" are expected.
+	 */
+	__qaOnlyEmitPhaseUnsafe(phase: "setup" | "run" | "assert" | "cleanup"): Promise<void>;
+
+	/**
+	 * QA-ONLY. Unsafe.
+	 *
+	 * Sets an in-memory-only external edit policy override.
+	 * Does NOT persist to settings, does NOT push update metadata.
+	 * Pass null to clear and revert to the real setting.
+	 * Returns the previous effective policy.
+	 */
+	__qaOnlySetExternalEditPolicyOverrideUnsafe(
+		policy: "always" | "closed-only" | "never" | null,
+	): Promise<{ previous: "always" | "closed-only" | "never" }>;
 }
 
 // -----------------------------------------------------------------------
@@ -100,6 +184,7 @@ interface PluginHandle {
 	getReconciliationController(): ReconciliationController;
 	getConnectionController(): ConnectionController | null;
 	getFlightTraceController(): FlightTraceController | null;
+	getEditorBindings(): EditorBindingManager | null;
 	getDiagnosticsDir(): Promise<string | undefined> | undefined;
 	sha256Hex(text: string): Promise<string>;
 	startQaFlightTrace(mode?: string): Promise<void>;
@@ -297,16 +382,52 @@ export function buildQaDebugApi(plugin: PluginHandle): YaosQaDebugApi {
 		},
 
 		async getEditorHash(path): Promise<string | null> {
-			const { MarkdownView } = await import("obsidian");
 			let content: string | null = null;
 			app.workspace.iterateAllLeaves((leaf) => {
 				if (content !== null) return;
-				if (leaf.view instanceof MarkdownView && leaf.view.file?.path === path) {
-					content = leaf.view.editor.getValue();
+				const view = leaf.view as unknown as { file?: { path?: string }; editor?: { getValue?: () => string } };
+				if (view?.file?.path === path && typeof view.editor?.getValue === "function") {
+					content = view.editor.getValue();
 				}
 			});
 			if (content === null) return null;
 			return sha256(content);
+		},
+
+		async __qaOnlyForceCrdtContentUnsafe(
+			path: string,
+			content: string,
+			opts: { originClass: "local" | "remote"; createIfMissing?: boolean },
+		): Promise<{ beforeHash: string | null; afterHash: string | null; fileExisted: boolean }> {
+			const vaultSync = plugin.getVaultSync();
+			if (!vaultSync) return { beforeHash: null, afterHash: null, fileExisted: false };
+
+			const existingText = vaultSync.getTextForPath(path);
+			const fileExisted = existingText !== null;
+
+			if (!fileExisted && !opts.createIfMissing) {
+				return { beforeHash: null, afterHash: null, fileExisted: false };
+			}
+
+			const ytext = existingText ?? vaultSync.ensureFile(path, content, "qa");
+			if (!ytext) return { beforeHash: null, afterHash: null, fileExisted };
+
+			// Compute before hash from current Y.Text content.
+			const beforeContent = yTextToString(ytext);
+			const beforeHash = beforeContent !== null ? await sha256(beforeContent) : null;
+
+			// "local" origin = in LOCAL_STRING_ORIGIN_SET → DiskMirror ignores it.
+			// "remote" origin = provider-like string not in set → DiskMirror writes to disk.
+			// We use the provider object itself for remote to guarantee correct routing.
+			const origin = opts.originClass === "local"
+				? "disk-sync"          // a known local origin
+				: (vaultSync.provider as unknown); // provider object = remote origin
+
+			forceReplaceYText(ytext, content, origin as string);
+
+			const afterContent = yTextToString(ytext);
+			const afterHash = afterContent !== null ? await sha256(afterContent) : null;
+			return { beforeHash, afterHash, fileExisted };
 		},
 
 		// -- Path sets ----------------------------------------------------------
@@ -317,6 +438,63 @@ export function buildQaDebugApi(plugin: PluginHandle): YaosQaDebugApi {
 
 		getDiskMarkdownPaths(): string[] {
 			return app.vault.getMarkdownFiles().map((f) => f.path);
+		},
+
+		getEditorBindingHealth(path: string): EditorBindingHealth {
+			const editorBindings = plugin.getEditorBindings();
+
+			// Find a MarkdownView leaf for this path.
+			let targetView: MarkdownView | null = null;
+			app.workspace.iterateAllLeaves((leaf) => {
+				if (targetView) return;
+				const view = leaf.view as unknown as { file?: { path?: string } };
+				if (view?.file?.path === path) {
+					targetView = leaf.view as unknown as MarkdownView;
+				}
+			});
+
+			if (!targetView) {
+				return {
+					leafOpen: false,
+					bound: false,
+					hasSyncFacet: false,
+					yTextMatchesExpected: null,
+					healthy: false,
+					settling: false,
+					issues: ["no-leaf"],
+				};
+			}
+
+			if (!editorBindings) {
+				return {
+					leafOpen: true,
+					bound: false,
+					hasSyncFacet: false,
+					yTextMatchesExpected: null,
+					healthy: false,
+					settling: false,
+					issues: ["bindings-unavailable"],
+				};
+			}
+
+			const health = editorBindings.getBindingHealthForView(targetView);
+			const collab = editorBindings.getCollabDebugInfoForView(targetView);
+
+			return {
+				leafOpen: true,
+				bound: health.bound,
+				hasSyncFacet: collab?.hasSyncFacet ?? false,
+				yTextMatchesExpected: collab?.yTextMatchesExpected ?? null,
+				// Require all three to be affirmatively true.
+				// null/unknown is NOT treated as healthy — it means the binding
+				// state has not fully settled and the caller should wait longer.
+				healthy:
+					health.healthy === true &&
+					(collab?.hasSyncFacet ?? false) === true &&
+					collab?.yTextMatchesExpected === true,
+				settling: health.settling,
+				issues: health.issues,
+			};
 		},
 
 		// -- Status -------------------------------------------------------------
@@ -359,6 +537,34 @@ export function buildQaDebugApi(plugin: PluginHandle): YaosQaDebugApi {
 
 		forceReconnect(): void {
 			plugin.getConnectionController()?.reconnect("qa-force-reconnect");
+		},
+
+		async __qaOnlyForceSyncFileFromDiskUnsafe(path: string, reason: "create" | "modify" = "modify"): Promise<void> {
+			await plugin.getReconciliationController().__qaOnlyForceSyncFileFromDiskUnsafe(path, reason);
+		},
+		async __qaOnlyPauseEditorBindingPropagationUnsafe(path: string): Promise<boolean> {
+			return plugin.getReconciliationController().__qaOnlyPauseEditorBindingPropagationUnsafe(path);
+		},
+		async __qaOnlyResumeEditorBindingPropagationUnsafe(path: string): Promise<boolean> {
+			return plugin.getReconciliationController().__qaOnlyResumeEditorBindingPropagationUnsafe(path);
+		},
+		async __qaOnlySetExternalEditPolicyOverrideUnsafe(
+			policy: "always" | "closed-only" | "never" | null,
+		): Promise<{ previous: "always" | "closed-only" | "never" }> {
+			// In-memory only — no persist, no settings save, no metadata push.
+			const previous = plugin.getReconciliationController().__qaOnlySetExternalEditPolicyOverrideUnsafe(policy);
+			return { previous };
+		},
+		async __qaOnlyEmitPhaseUnsafe(phase: "setup" | "run" | "assert" | "cleanup"): Promise<void> {
+			plugin.getFlightTraceController()?.record({
+				priority: "important",
+				kind: FLIGHT_KIND.qaPhase,
+				severity: "info",
+				scope: "diagnostics",
+				source: "diagnostics",
+				layer: "diagnostics",
+				data: { phase },
+			});
 		},
 	};
 
