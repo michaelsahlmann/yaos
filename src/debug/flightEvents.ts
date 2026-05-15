@@ -1,5 +1,5 @@
 export const FLIGHT_EVENT_SCHEMA_VERSION = 1;
-export const FLIGHT_TAXONOMY_VERSION = 3; // bumped: recovery/tombstone events + reconcile.file.decision coverage
+export const FLIGHT_TAXONOMY_VERSION = 5; // bumped: qa.phase markers
 
 export type FlightSeverity = "debug" | "info" | "warn" | "error";
 export type FlightScope =
@@ -48,6 +48,13 @@ export const FLIGHT_KIND = {
 	qaTraceStarted: "qa.trace.started",
 	qaTraceStopped: "qa.trace.stopped",
 	qaCheckpoint: "qa.checkpoint",
+	/**
+	 * Emitted at the start of each QA scenario phase (setup/run/assert/cleanup).
+	 * Analyzers use this to distinguish scenario-under-test events from
+	 * teardown/cleanup events, eliminating the need for heuristics like
+	 * "was there a disk.delete.observed before this tombstone?"
+	 */
+	qaPhase: "qa.phase",
 	qaInvariantFailed: "qa.invariant.failed",
 	flightEventsDropped: "flight.events.dropped",
 	flightLogsRotated: "flight.logs.rotated",
@@ -78,9 +85,13 @@ export const FLIGHT_KIND = {
 	diskWriteOk: "disk.write.ok",
 	diskWriteFailed: "disk.write.failed",                  // priority: critical
 
+	// Disk — rename
+	diskRenameObserved: "disk.rename.observed",
+
 	// CRDT
 	crdtFileCreated: "crdt.file.created",
 	crdtFileUpdated: "crdt.file.updated",
+	crdtFileRenamed: "crdt.file.renamed",
 	crdtFileTombstoned: "crdt.file.tombstoned",            // priority: critical
 	crdtFileRevived: "crdt.file.revived",                  // priority: critical
 

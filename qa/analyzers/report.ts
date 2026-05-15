@@ -23,8 +23,9 @@ export interface AnalyzerReport {
 		checkedEvents: number;
 		incompleteOps: number;
 		hashMismatches: number;
-		criticalDrops: number;
-		redactionFailures: number;
+	criticalDrops: number;
+	redactionFailures: number;
+	scenarioFailures: number;
 	};
 
 	failures: AnalyzerFinding[];
@@ -44,6 +45,7 @@ export function buildReport(
 	const redactionFailures = findings.filter((f) => f.rule === "redaction-failure").length;
 	const hashMismatches = findings.filter((f) => f.rule === "disk-crdt-idle-mismatch").length;
 	const incompleteOps = findings.filter((f) => f.rule === "stuck-receipt").length;
+	const scenarioFailures = findings.filter((f) => f.rule === "scenario-expectation-missing").length;
 
 	return {
 		scenarioId,
@@ -58,6 +60,7 @@ export function buildReport(
 			hashMismatches,
 			criticalDrops,
 			redactionFailures,
+			scenarioFailures,
 		},
 		failures,
 		warnings,
@@ -77,6 +80,7 @@ export function formatReport(report: AnalyzerReport): string {
 	lines.push(`Warnings:       ${report.summary.warnings}`);
 	lines.push(`Critical drops: ${report.summary.criticalDrops}`);
 	lines.push(`Redaction fail: ${report.summary.redactionFailures}`);
+	lines.push(`Scenario reqs:  ${report.summary.scenarioFailures}`);
 	lines.push(`Hash mismatches:${report.summary.hashMismatches}`);
 	lines.push(`Stuck receipts: ${report.summary.incompleteOps}`);
 

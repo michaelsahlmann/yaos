@@ -13,6 +13,7 @@ import { readFileSync, writeFileSync } from "fs";
 import { parseNdjson } from "./flight-event";
 import { buildReport, formatReport } from "./report";
 import type { AnalyzerFinding } from "./report";
+import { checkScenarioExpectations } from "./scenario-expectations";
 
 // Rules
 import { checkUnsafeOverwrite } from "./rules/unsafe-overwrite";
@@ -25,6 +26,8 @@ import { checkDiskCrdtIdleMismatch } from "./rules/disk-crdt-idle-mismatch";
 import { checkMissingPathId } from "./rules/missing-path-id";
 import { checkRedactionFailure } from "./rules/redaction-failure";
 import { checkDroppedCriticalEvent } from "./rules/dropped-critical-event";
+import { checkOrphanAfterRename } from "./rules/orphan-after-rename";
+import { checkActiveExcludedPath } from "./rules/active-excluded-path";
 
 const ALL_RULES = [
 	checkUnsafeOverwrite,
@@ -37,6 +40,8 @@ const ALL_RULES = [
 	checkMissingPathId,
 	checkRedactionFailure,
 	checkDroppedCriticalEvent,
+	checkOrphanAfterRename,
+	checkActiveExcludedPath,
 ];
 
 export function analyzeTrace(
@@ -48,6 +53,7 @@ export function analyzeTrace(
 	for (const rule of ALL_RULES) {
 		allFindings.push(...rule(events));
 	}
+	allFindings.push(...checkScenarioExpectations(events, opts.scenarioId));
 	return buildReport(opts.traceFile ?? "unknown", events.length, allFindings, opts.scenarioId);
 }
 
