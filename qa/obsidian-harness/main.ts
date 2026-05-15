@@ -20,6 +20,44 @@ import { s02OfflineHandoffCreate } from "./scenarios/s02-offline-handoff-create"
 import { s03DeleteDoesNotResurrect } from "./scenarios/s03-delete-does-not-resurrect";
 import { s04aBulkImportSmoke, s04bBulkImportStorm } from "./scenarios/s04-bulk-import-after-delete";
 import { s05aFrontmatterClosedFile, s05bFrontmatterOpenEditor } from "./scenarios/s05-frontmatter-safety-loop";
+import {
+	s06aIssue25ForcedRecoveryCrdtOnly,
+	s06aIssue25ForcedRecoveryLocalOnly,
+} from "./scenarios/s06a-issue-25-forced-recovery";
+import { s06bIssue25Natural } from "./scenarios/s06b-issue-25-natural";
+import {
+	s07gRenameAfterCreate,
+	s07gRenameBeforeCrdtRegistration,
+	s07gRenameToTombstonedPath,
+	s07gRenameChain,
+	s07gModifyThenRename,
+	s07gModifyThenRenameChain,
+} from "./scenarios/s07g-rename-after-create";
+import {
+	s09aRenameIntoExcluded,
+	s09bRenameFromExcluded,
+	s09cRenameToVacatedPath,
+} from "./scenarios/s09-rename-boundary";
+import {
+	s07aCreateEmptyThenFill,
+	s07bDelayedTemplateWrites,
+	s07cOpenEditorTemplateMutation,
+	s07eFrontmatterRace,
+	s07fInvalidIntermediateValidFinal,
+	s07hMultiFileBurst,
+} from "./scenarios/s07-plugin-writes";
+import {
+	s07iFolderThenFile,
+	s07jAttachmentRefBeforeBlob,
+	s07kBlobArrivesAfterReference,
+	s07hLargeBurst,
+} from "./scenarios/s07-extra-scenarios";
+import {
+	s08aBulk500,
+	s08bBulkUnicode,
+	s08cBulkNested,
+	s08dBulkMixed,
+} from "./scenarios/s08-bulk-import";
 
 const ALL_SCENARIOS: QaScenario[] = [
 	s01SingleDeviceBasicEdit,
@@ -29,6 +67,36 @@ const ALL_SCENARIOS: QaScenario[] = [
 	s04bBulkImportStorm,
 	s05aFrontmatterClosedFile,
 	s05bFrontmatterOpenEditor,
+	s06aIssue25ForcedRecoveryCrdtOnly,
+	s06aIssue25ForcedRecoveryLocalOnly,
+	s06bIssue25Natural,
+	// S07g: rename/move after create
+	s07gRenameAfterCreate,
+	s07gRenameBeforeCrdtRegistration,
+	s07gRenameToTombstonedPath,
+	s07gRenameChain,
+	s07gModifyThenRename,
+	s07gModifyThenRenameChain,
+	// S07: plugin-generated writes (Templater class)
+	s07aCreateEmptyThenFill,
+	s07bDelayedTemplateWrites,
+	s07cOpenEditorTemplateMutation,
+	s07eFrontmatterRace,
+	s07fInvalidIntermediateValidFinal,
+	s07hMultiFileBurst,
+	s07iFolderThenFile,
+	s07jAttachmentRefBeforeBlob,
+	s07kBlobArrivesAfterReference,
+	s07hLargeBurst,
+	// S08: bulk import stress family
+	s08aBulk500,
+	s08bBulkUnicode,
+	s08cBulkNested,
+	s08dBulkMixed,
+	// S09: rename boundary (syncable ↔ excluded, vacated-path)
+	s09aRenameIntoExcluded,
+	s09bRenameFromExcluded,
+	s09cRenameToVacatedPath,
 ];
 
 export default class YaosQaHarnessPlugin extends Plugin {
