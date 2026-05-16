@@ -263,6 +263,12 @@ export class DeviceWitnessTracker {
 	/** In-memory checkpoint segments: segmentIndex → NDJSON string */
 	private checkpointSegments = new Map<number, string>();
 
+	// Phase 3: scenario run identity + step index
+	private _scenarioRunId: string | null = null;
+	private _scenarioId: string | null = null;
+	private _scenarioStepIndex: number | null = null;
+	private _scenarioStepLabel: string | undefined = undefined;
+
 	constructor(private readonly config: WitnessTrackerConfig) {
 		this.stableAfterMs = config.stableAfterMs ?? (config.platform === "mobile" ? 4000 : 2000);
 		this.editorSettleGraceMs = config.editorSettleGraceMs ?? 750;
@@ -391,6 +397,39 @@ export class DeviceWitnessTracker {
 	/** Phase 2: Get current runtime state for mobile-background detection. */
 	getRuntimeState(): RuntimeState {
 		return this._getRuntimeState();
+	}
+
+	/**
+	 * Phase 3: Set the cross-device scenario run identity.
+	 * Must be called before any witness event is emitted under the run.
+	 */
+	setScenarioRunId(scenarioRunId: string, scenarioId: string): void {
+		this._scenarioRunId = scenarioRunId;
+		this._scenarioId = scenarioId;
+	}
+
+	/**
+	 * Phase 3: Advance the scenario step index.
+	 * stepIndex must be strictly greater than the current step index.
+	 * Returns false if validation fails (backwards step, no scenarioRunId).
+	 */
+	advanceScenarioStep(stepIndex: number, label?: string): boolean {
+		if (!this._scenarioRunId) return false;
+		if (!Number.isInteger(stepIndex) || stepIndex < 0) return false;
+		if (this._scenarioStepIndex !== null && stepIndex <= this._scenarioStepIndex) return false;
+		this._scenarioStepIndex = stepIndex;
+		this._scenarioStepLabel = label;
+		return true;
+	}
+
+	/** Phase 3: Get current scenario step state. */
+	getScenarioStepState(): { scenarioRunId: string | null; scenarioId: string | null; stepIndex: number | null; stepLabel: string | undefined } {
+		return {
+			scenarioRunId: this._scenarioRunId,
+			scenarioId: this._scenarioId,
+			stepIndex: this._scenarioStepIndex,
+			stepLabel: this._scenarioStepLabel,
+		};
 	}
 
 	/**
@@ -538,6 +577,11 @@ export class DeviceWitnessTracker {
 		if (obs.lastRemoteApplyAt !== undefined) commonData.lastRemoteApplyAt = obs.lastRemoteApplyAt;
 		if (obs.lastDiskWriteAt !== undefined) commonData.lastDiskWriteAt = obs.lastDiskWriteAt;
 		if (obs.lastRecoveryAt !== undefined) commonData.lastRecoveryAt = obs.lastRecoveryAt;
+		// Phase 3: scenario step fields (optional — only when set)
+		if (this._scenarioStepIndex !== null) commonData.scenarioStepIndex = this._scenarioStepIndex;
+		if (this._scenarioStepLabel !== undefined) commonData.scenarioStepLabel = this._scenarioStepLabel;
+		if (this._scenarioRunId !== null) commonData.scenarioRunId = this._scenarioRunId;
+		if (this._scenarioId !== null) commonData.scenarioId = this._scenarioId;
 
 		// Phase 2: if unavailable, emit unavailable divergence instead of normal evaluation
 		if (isUnavailable) {
