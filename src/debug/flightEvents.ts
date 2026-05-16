@@ -1,5 +1,5 @@
 export const FLIGHT_EVENT_SCHEMA_VERSION = 1;
-export const FLIGHT_TAXONOMY_VERSION = 7; // bumped: Phase 2 — recoveryStateHash on recovery.decision, causedByEvents + runtimeState on device.witness.*
+export const FLIGHT_TAXONOMY_VERSION = 8; // bumped: Phase 3 — qa.scenario.step FlightKind, scenarioStepIndex/scenarioStepLabel/scenarioRunId/scenarioId on device.witness.*
 
 export type FlightSeverity = "debug" | "info" | "warn" | "error";
 export type FlightScope =
@@ -123,6 +123,8 @@ export const FLIGHT_KIND = {
 	// Device witness (Layer 4 Phase 1)
 	deviceWitnessSettled: "device.witness.settled",
 	deviceWitnessDiverged: "device.witness.diverged",
+	// QA scenario step (Layer 4 Phase 3 — cross-device ordering for manual runs)
+	qaScenarioStep: "qa.scenario.step",
 } as const;
 
 export type FlightKind = typeof FLIGHT_KIND[keyof typeof FLIGHT_KIND];
