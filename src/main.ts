@@ -2150,12 +2150,13 @@ export default class VaultCrdtSyncPlugin extends Plugin {
 				const ts = new Date().toISOString().replace(/[:.]/g, "-");
 				const filename = `${runId}-${ctx.deviceId}-${ts}.ndjson`;
 				const fullPath = `${bundleDir}/${filename}`;
+				const absolutePath = vaultRoot ? `${vaultRoot}/${fullPath}` : fullPath;
 				await this.app.vault.adapter.mkdir(bundleDir);
 				await this.app.vault.adapter.write(fullPath, bundleStr);
 				if (clipboardOk) {
-					new Notice(`Witness bundle copied to clipboard and written to: ${fullPath}`, 8000);
+					new Notice(`Witness bundle copied to clipboard and written to: ${absolutePath}`, 8000);
 				} else {
-					new Notice(`Witness bundle written to: ${fullPath}`, 8000);
+					new Notice(`Witness bundle written to: ${absolutePath}`, 8000);
 				}
 				return;
 			} catch (e) {

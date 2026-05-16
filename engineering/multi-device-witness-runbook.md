@@ -266,6 +266,31 @@ Validation:
 
 ---
 
+## Manual vs Automated Assertions
+
+### Testable manually via offline analyzer (bundle data from `YAOS QA: Export witness bundle`)
+
+These rules run in `bun run qa:analyze-bundles` and work on any platform including mobile:
+
+- `analyzeWitnessQuorum` — no sync-correctness divergences in bundle events
+- `analyzeStaleHashAfterNewerWitness` — no stale hash regressions
+- `analyzeRecoveryEmittedOldHash` — no recovery-old-hash regressions
+- `analyzeEditorStability` — no editor stability issues
+- `analyzeCrossDeviceHashesEqual` — all devices agree on last settled hash
+- `analyzeConvergenceEvidence` — positive proof of convergence
+
+### Requires automated CDP (desktop-only)
+
+These primitives use live polling of the in-memory witness buffer and require a CDP controller connected to a running Obsidian instance. They cannot drive iOS or Android:
+
+- `witnessQuorum` — real-time strict quorum with live buffer polling
+- `witnessQuorumEventually` — real-time eventual convergence with intermediate hash recording
+- `noStaleHashAfterNewerWitness` — real-time negative window check
+- `noRecoveryEmittedOldHash` — real-time recovery precision path check
+- `editorStableDuring` — real-time editor stability window
+
+The s11a and s11b scenarios (Phase 2) use CDP automation. The s12a, s12b, s12c scenarios (Phase 3) are manual-only — CDP does not drive iOS or Android.
+
 ## Troubleshooting
 
 **"set scenarioRunId via 'YAOS QA: Set scenario run ID' first"**

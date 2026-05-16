@@ -325,7 +325,10 @@ function main(): void {
 	const firstHeader = accepted[0]?.header;
 	const scenarioRunId = firstHeader?.scenarioRunId ?? "unknown";
 	const scenarioId = firstHeader?.scenarioId ?? "unknown";
-	const createdAt = firstHeader?.createdAt ?? new Date().toISOString();
+	// Use earliest createdAt across accepted bundles (display-only per Req 5.4)
+	const createdAt = accepted.length > 0
+		? accepted.map((b) => b.header.createdAt).sort()[0]!
+		: new Date().toISOString();
 
 	// Merge events from all accepted bundles
 	const allEvents: WitnessEvent[] = [];

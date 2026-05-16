@@ -863,12 +863,14 @@ export function buildQaDebugApi(plugin: PluginHandle): YaosQaDebugApi {
 				scope: "diagnostics",
 				source: "diagnostics",
 				layer: "diagnostics",
+				mono: performance.now(),
 				data: {
 					scenarioRunId: state.scenarioRunId,
 					scenarioId: state.scenarioId,
 					scenarioStepIndex: stepIndex,
 					stepLabel: label,
 					deviceId: api.getDeviceId(),
+					monotonicMs: performance.now(),
 					enteredAt: new Date().toISOString(),
 				},
 			});

@@ -39,9 +39,12 @@ export function analyzeWitnessQuorum(
 		(e) => e.kind === "device.witness.settled" && e.pathId === spec.pathId,
 	);
 
-	// B8: check if any settled events have stepIndex; if none do, fail closed
+	// B8: check if any settled events have stepIndex or scenarioStepIndex; if none do, fail closed
 	const hasStepIndex = settled.some(
-		(e) => typeof (e.data as Record<string, unknown> | undefined)?.stepIndex === "number",
+		(e) => {
+			const d = e.data as Record<string, unknown> | undefined;
+			return typeof d?.stepIndex === "number" || typeof d?.scenarioStepIndex === "number";
+		},
 	);
 
 	// If there are settled events but none have stepIndex, we cannot enforce the deadline
@@ -55,8 +58,10 @@ export function analyzeWitnessQuorum(
 	}
 
 	// B8: only accept settled events at or before the deadline
+	// Accept both legacy stepIndex and Phase 3 scenarioStepIndex
 	const settledByDeadline = settled.filter((e) => {
-		const si = (e.data as Record<string, unknown> | undefined)?.stepIndex;
+		const d = e.data as Record<string, unknown> | undefined;
+		const si = typeof d?.scenarioStepIndex === "number" ? d.scenarioStepIndex : d?.stepIndex;
 		// If stepIndex is absent on this specific event but others have it, skip this event
 		if (typeof si !== "number") return false;
 		return si <= spec.deadlineStepIndex;
