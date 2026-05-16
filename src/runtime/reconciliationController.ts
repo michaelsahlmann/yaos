@@ -83,6 +83,12 @@ interface ReconciliationControllerDeps {
 	trace(source: string, msg: string, details?: Record<string, unknown>): void;
 	scheduleTraceStateSnapshot(reason: string): void;
 	log(message: string): void;
+	/**
+	 * Phase 2 (Requirement 10): Compute a witness-domain recoveryStateHash for content.
+	 * Called when emitting recovery.decision events while a flight trace is active.
+	 * Returns null if no trace is active or hash computation fails.
+	 */
+	computeRecoveryStateHash?(path: string, content: string): Promise<string | null>;
 }
 
 const RECONCILE_COOLDOWN_MS = 10_000;
@@ -1376,6 +1382,7 @@ export class ReconciliationController {
 					crdtLength: crdtContent?.length ?? null,
 				});
 			// recovery.decision: emit before quarantine check so even quarantined cases are visible
+			const _rsh1 = await this.deps.computeRecoveryStateHash?.(file.path, content) ?? undefined;
 			this.deps.recordFlightPathEvent?.({
 				priority: "important",
 				kind: FLIGHT_KIND.recoveryDecision,
@@ -1395,6 +1402,7 @@ export class ReconciliationController {
 					editorEqualsCrdt: false,
 					diskFingerprintPrefix: contentFingerprint(content).slice(0, 8),
 					crdtFingerprintPrefix: crdtContent ? contentFingerprint(crdtContent).slice(0, 8) : null,
+					...(_rsh1 ? { recoveryStateHash: _rsh1 } : {}),
 				},
 			});
 				if (this.shouldQuarantineRepeatedRecovery(
@@ -1467,6 +1475,7 @@ export class ReconciliationController {
 					`syncFileFromDisk: recovering "${file.path}" ` +
 					`(editor-bound, missing CRDT text: seeding ${content.length} chars)`,
 				);
+				const _rsh2 = await this.deps.computeRecoveryStateHash?.(file.path, content) ?? undefined;
 				this.deps.recordFlightPathEvent?.({
 					priority: "important",
 					kind: FLIGHT_KIND.recoveryDecision,
@@ -1480,6 +1489,7 @@ export class ReconciliationController {
 						signature: recoverySignature("bound-file-local-only-seed", "", content),
 						action: "seed-crdt-from-disk",
 						diskLength: content.length,
+						...(_rsh2 ? { recoveryStateHash: _rsh2 } : {}),
 					},
 				});
 				if (this.shouldQuarantineRepeatedRecovery(
@@ -1569,6 +1579,7 @@ export class ReconciliationController {
 					`syncFileFromDisk: recovering "${file.path}" ` +
 					`(editor-bound external disk edit while idle: ${crdtContent?.length ?? 0} -> ${content.length} chars)`,
 				);
+			const _rsh3 = await this.deps.computeRecoveryStateHash?.(file.path, content) ?? undefined;
 			this.deps.recordFlightPathEvent?.({
 				priority: "important",
 				kind: FLIGHT_KIND.recoveryDecision,
@@ -1588,6 +1599,7 @@ export class ReconciliationController {
 					editorEqualsCrdt: crdtOnlyViews.length > 0,
 					diskFingerprintPrefix: contentFingerprint(content).slice(0, 8),
 					crdtFingerprintPrefix: crdtContent ? contentFingerprint(crdtContent).slice(0, 8) : null,
+					...(_rsh3 ? { recoveryStateHash: _rsh3 } : {}),
 				},
 			});
 				if (this.shouldQuarantineRepeatedRecovery(
@@ -1659,6 +1671,7 @@ export class ReconciliationController {
 					`syncFileFromDisk: recovering "${file.path}" ` +
 					`(editor-bound idle disk edit, missing CRDT text: seeding ${content.length} chars)`,
 				);
+				const _rsh4 = await this.deps.computeRecoveryStateHash?.(file.path, content) ?? undefined;
 				this.deps.recordFlightPathEvent?.({
 					priority: "important",
 					kind: FLIGHT_KIND.recoveryDecision,
@@ -1672,6 +1685,7 @@ export class ReconciliationController {
 						signature: recoverySignature("bound-file-open-idle-seed", "", content),
 						action: "seed-crdt-from-disk",
 						diskLength: content.length,
+						...(_rsh4 ? { recoveryStateHash: _rsh4 } : {}),
 					},
 				});
 				if (this.shouldQuarantineRepeatedRecovery(
