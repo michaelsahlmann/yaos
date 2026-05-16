@@ -185,8 +185,22 @@ export async function collectFileStats(
  *   settled this reconcile (no conflict, authority is certain). These become
  *   the baseline for the next startup reconcile.
  *   - If a path is in settledHashes: store that hash.
- *   - If a path's stat is unchanged from the old index: carry the old hash.
- *   - If a path's stat changed but no settled hash: clear the hash (stale).
+ *   - Otherwise: carry forward the old hash (if any).
+ *
+ * Why always carry forward when no settled hash?
+ *   After a sync-driven flushWrite, the callback stores the hash with a dummy
+ *   mtime=0 entry (real stat not yet available). The next reconcile sees stat
+ *   changed (0 → real) but the file content is unchanged (disk == CRDT → no
+ *   action). Without carrying forward, the hash is cleared. With carry-forward,
+ *   the baseline survives until a real reconcile action (conflict, import, etc.)
+ *   provides a new settledHash.
+ *
+ *   The worst case of a stale carried-forward hash is that a future authority
+ *   decision treats content as "unchanged from baseline" when it actually
+ *   changed externally — resulting in a conflict artifact (conservative) rather
+ *   than a silent overwrite (destructive). That is the correct failure mode.
+ *   Concrete updates happen via settledHashes, updateDiskIndexForPath, or
+ *   setDiskWriteCallback — all of which have the actual content in scope.
  */
 export function updateIndex(
 	index: DiskIndex,
@@ -203,21 +217,13 @@ export function updateIndex(
 		const oldEntry = index[path];
 		const settledHash = options.settledHashes?.get(path);
 
-		// Determine content hash for this entry:
-		// 1. If a settled hash was recorded for this reconcile, use it.
-		// 2. Else if the stat is unchanged from before, the old hash is still valid.
-		// 3. Else (stat changed, no new settled hash): clear hash — it's stale.
-		let contentHash: string | undefined;
-		if (settledHash !== undefined) {
-			contentHash = settledHash;
-		} else if (
-			oldEntry !== undefined &&
-			oldEntry.mtime === stat.mtime &&
-			oldEntry.size === stat.size
-		) {
-			contentHash = oldEntry.contentHash;
-		}
-		// else: stat changed without a settled hash → omit contentHash
+		// Determine content hash:
+		// 1. If a settled hash was recorded for this reconcile, use it (authoritative).
+		// 2. Otherwise carry forward the old hash (if any).
+		//    Stat changes alone don't invalidate the hash — the hash is updated
+		//    by settledHashes, updateDiskIndexForPath, or setDiskWriteCallback
+		//    whenever content actually changes in a known direction.
+		const contentHash: string | undefined = settledHash ?? oldEntry?.contentHash;
 
 		newIndex[path] = {
 			mtime: stat.mtime,
