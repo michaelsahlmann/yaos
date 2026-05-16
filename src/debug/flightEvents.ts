@@ -1,5 +1,5 @@
 export const FLIGHT_EVENT_SCHEMA_VERSION = 1;
-export const FLIGHT_TAXONOMY_VERSION = 5; // bumped: qa.phase markers
+export const FLIGHT_TAXONOMY_VERSION = 6; // bumped: device.witness events (Layer 4 Phase 1)
 
 export type FlightSeverity = "debug" | "info" | "warn" | "error";
 export type FlightScope =
@@ -35,6 +35,7 @@ export type FlightSource =
 	| "serverAckTracker"
 	| "traceRuntime"
 	| "diagnostics"
+	| "deviceWitness"
 	| "server";
 
 export type FlightPriority = "critical" | "important" | "verbose";
@@ -118,6 +119,10 @@ export const FLIGHT_KIND = {
 	deleteDiskApplied: "delete.disk.applied",
 	/** Emitted by diskMirror: file preserved instead of deleted (dirty local copy). */
 	deletePreserved: "delete.preserved",
+
+	// Device witness (Layer 4 Phase 1)
+	deviceWitnessSettled: "device.witness.settled",
+	deviceWitnessDiverged: "device.witness.diverged",
 } as const;
 
 export type FlightKind = typeof FLIGHT_KIND[keyof typeof FLIGHT_KIND];
