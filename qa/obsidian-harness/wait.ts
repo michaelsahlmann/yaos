@@ -171,3 +171,28 @@ export function waitForActiveMarkdownLeaf(
 		`waitForActiveMarkdownLeaf(${path})`,
 	);
 }
+
+/**
+ * Wait for a NEW device.witness.settled event for a path emitted AFTER this
+ * call begins. Pre-existing settled events in the buffer are ignored.
+ *
+ * This is NOT a current-state check — it proves fresh convergence after the
+ * call was made. If the device already settled before this call, trigger a
+ * new dirty event first so the tracker re-evaluates.
+ *
+ * Rejects if no active flight trace, if a diverged event arrives after wait
+ * start, or if timeoutMs elapses.
+ *
+ * Requires an active flight trace (qa-safe mode recommended).
+ */
+export function witnessDeviceSettled(
+	yaos: YaosQaDebugApi,
+	path: string,
+	options: {
+		expectedContent?: string;
+		expectedStateHash?: string;
+		timeoutMs: number;
+	},
+): Promise<void> {
+	return yaos.witnessDeviceSettled(path, options);
+}

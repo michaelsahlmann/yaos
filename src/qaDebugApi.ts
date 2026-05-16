@@ -162,6 +162,36 @@ export interface YaosQaDebugApi {
 	__qaOnlyEmitPhaseUnsafe(phase: "setup" | "run" | "assert" | "cleanup"): Promise<void>;
 
 	/**
+	 * Wait for a NEW device.witness.settled event for a path emitted AFTER
+	 * this call begins. Pre-existing settled events in the buffer are ignored.
+	 *
+	 * This is NOT a current-state check. It proves that the device freshly
+	 * converged after the call was made. If the device already settled before
+	 * this call, trigger a new dirty event first (e.g. via markDirty or a
+	 * real file operation) so the tracker re-evaluates.
+	 *
+	 * Rejects if:
+	 *   - no active flight trace (reason: no_active_trace)
+	 *   - both expectedContent and expectedStateHash provided (reason: usage_error)
+	 *   - a device.witness.diverged event arrives after wait start
+	 *   - timeoutMs elapses without a matching settled event
+	 */
+	witnessDeviceSettled(
+		path: string,
+		options: {
+			expectedContent?: string;
+			expectedStateHash?: string;
+			timeoutMs: number;
+		},
+	): Promise<void>;
+
+	/**
+	 * Compute the witness-domain stateHash for a given content string.
+	 * Uses the active trace's salt. Rejects if no trace is active.
+	 */
+	computeWitnessStateHash(content: string): Promise<string>;
+
+	/**
 	 * QA-ONLY. Unsafe.
 	 *
 	 * Sets an in-memory-only external edit policy override.
@@ -193,6 +223,7 @@ interface PluginHandle {
 	runReconciliation(): Promise<void>;
 	disconnectProvider(reason?: string): void;
 	connectProvider(reason?: string): void;
+	getDeviceWitnessTracker?(): import("./diagnostics/deviceWitnessTracker").DeviceWitnessTracker | null;
 }
 
 // -----------------------------------------------------------------------
@@ -565,6 +596,73 @@ export function buildQaDebugApi(plugin: PluginHandle): YaosQaDebugApi {
 				layer: "diagnostics",
 				data: { phase },
 			});
+		},
+
+		async witnessDeviceSettled(
+			path: string,
+			options: {
+				expectedContent?: string;
+				expectedStateHash?: string;
+				timeoutMs: number;
+			},
+		): Promise<void> {
+			if (options.expectedContent !== undefined && options.expectedStateHash !== undefined) {
+				throw Object.assign(new Error("witnessDeviceSettled: provide expectedContent OR expectedStateHash, not both"), { reason: "usage_error" });
+			}
+			const tracker = plugin.getDeviceWitnessTracker?.();
+			if (!tracker) {
+				throw Object.assign(new Error("witnessDeviceSettled: no active flight trace"), { reason: "no_active_trace" });
+			}
+
+			let expectedHash: string | undefined = options.expectedStateHash;
+			if (options.expectedContent !== undefined) {
+				expectedHash = await tracker.computeWitnessStateHash(options.expectedContent);
+			}
+
+			// Anchor: only consider events emitted after this call begins.
+			const startSeq = tracker.currentWitnessSeq();
+			const startTime = Date.now();
+
+			return new Promise((resolve, reject) => {
+				const check = () => {
+					const buf = tracker.getWitnessBuffer();
+					// Only consider events after startSeq.
+					for (const e of buf) {
+						if (e.seq <= startSeq) continue;
+						if (e.path !== path) continue;
+						if (e.kind === "diverged") {
+							reject(Object.assign(
+								new Error(`witnessDeviceSettled: diverged for ${path}: ${e.data.reason}`),
+								{ reason: e.data.reason, data: e.data },
+							));
+							return;
+						}
+						if (e.kind === "settled") {
+							if (expectedHash === undefined || e.data.stateHash === expectedHash) {
+								resolve();
+								return;
+							}
+						}
+					}
+					if (Date.now() - startTime >= options.timeoutMs) {
+						// Collect last known observation data after startSeq.
+						const last = [...buf].reverse().find((e) => e.path === path && e.seq > startSeq);
+						reject(Object.assign(new Error(`witnessDeviceSettled: timeout for ${path}`), {
+							reason: "timeout",
+							lastObserved: last?.data ?? null,
+						}));
+						return;
+					}
+					setTimeout(check, 250);
+				};
+				check();
+			});
+		},
+
+		async computeWitnessStateHash(content: string): Promise<string> {
+			const tracker = plugin.getDeviceWitnessTracker?.();
+			if (!tracker) throw Object.assign(new Error("computeWitnessStateHash: no active flight trace"), { reason: "no_active_trace" });
+			return tracker.computeWitnessStateHash(content);
 		},
 	};
 

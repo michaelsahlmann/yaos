@@ -84,6 +84,8 @@ import { ConfirmModal } from "./ui/ConfirmModal";
 import { runVfsTortureTest } from "./dev/vfsTortureTest";
 import { runSchemaMigrationToV2 } from "./migrations/schemaV2";
 import { buildQaDebugApi } from "./qaDebugApi";
+import { DeviceWitnessTracker } from "./diagnostics/deviceWitnessTracker";
+import { isLocalOrigin } from "./sync/origins";
 
 type PersistedPluginState = Partial<VaultSyncSettings> & {
 	_diskIndex?: DiskIndex;
@@ -115,6 +117,7 @@ export default class VaultCrdtSyncPlugin extends Plugin {
 	private setupLinkController: SetupLinkController | null = null;
 	private traceRuntime: TraceRuntimeController | null = null;
 	private flightTrace: FlightTraceController | null = null;
+	private deviceWitnessTracker: import("./diagnostics/deviceWitnessTracker").DeviceWitnessTracker | null = null;
 	private statusBarEl: HTMLElement | null = null;
 	private statusInterval: ReturnType<typeof setInterval> | null = null;
 
@@ -463,12 +466,11 @@ export default class VaultCrdtSyncPlugin extends Plugin {
 				if (existing) {
 					existing.contentHash = contentHash;
 				} else {
-					// New file: create minimal entry with contentHash.
-					// mtime/size=0 triggers re-stat on next reconcile (harmless
-					// extra read) but contentHash is immediately available as
-					// baseline for the next startup reconcile.
 					this.diskIndex[path] = { mtime: 0, size: 0, contentHash };
 				}
+				// Req 17.2: mark dirty after post-readback verification succeeds.
+				// contentHash is baselineHash-domain — NOT published as diskHash.
+				this.deviceWitnessTracker?.markDirty(path, "disk-write");
 			});
 
 			// 4b. BlobSyncManager (if attachment sync is enabled)
@@ -1473,6 +1475,14 @@ export default class VaultCrdtSyncPlugin extends Plugin {
 		}
 
 		void this.flightTrace?.recordPath(event);
+
+		// Req 17.3: mark dirty for recovery.decision and recovery.apply.done.
+		if (
+			(event.kind === "recovery.decision" || event.kind === "recovery.apply.done") &&
+			event.path.endsWith(".md")
+		) {
+			this.deviceWitnessTracker?.markDirty(event.path, "recovery");
+		}
 	}
 
 	private scheduleTraceStateSnapshot(reason: string): void {
@@ -2004,12 +2014,150 @@ export default class VaultCrdtSyncPlugin extends Plugin {
 		await this.flightTrace?.start(resolved, this.settings.qaTraceSecret || null, {
 			manualStart: true,
 		});
+		this._startDeviceWitnessTracker(resolved);
 		new Notice(`QA flight trace started (mode: ${resolved}).`, 4000);
 	}
 
 	private async stopQaFlightTrace(): Promise<void> {
+		this._stopDeviceWitnessTracker();
 		await this.flightTrace?.stop();
 		new Notice("QA flight trace stopped.", 4000);
+	}
+
+	private _startDeviceWitnessTracker(mode: FlightMode): void {
+		this._stopDeviceWitnessTracker();
+		const sink = this.flightTrace;
+		const ctx = this.flightTrace?.context;
+		if (!sink || !ctx) return;
+
+		this.deviceWitnessTracker = new DeviceWitnessTracker({
+			stateSecret: randomBase64Url(16),
+			qaTraceSecret: this.settings.qaTraceSecret || null,
+			flightMode: mode,
+			sink,
+			traceContext: ctx,
+			platform: "desktop",
+			readCrdtContent: (path) => {
+				const vs = this.vaultSync;
+				if (!vs) return null;
+				const text = vs.getTextForPath(path);
+				if (!text) return null;
+				return yTextToString(text);
+			},
+			isCrdtTombstoned: (path) => {
+				return this.vaultSync?.isMarkdownTombstoned(path) ?? false;
+			},
+			getFileId: (path) => {
+				return this.vaultSync?.getFileId(path);
+			},
+			readDiskContent: async (path) => {
+				const file = this.app.vault.getFileByPath(path);
+				if (!file) return null;
+				try {
+					return await this.app.vault.read(file);
+				} catch {
+					return null;
+				}
+			},
+			sampleEditor: (path) => {
+				const editorBindings = this.editorBindings;
+				if (!editorBindings) return { kind: "not_open", content: null };
+
+				let targetView: MarkdownView | null = null;
+				this.app.workspace.iterateAllLeaves((leaf) => {
+					if (targetView) return;
+					const view = leaf.view as unknown as { file?: { path?: string } };
+					if (view?.file?.path === path) {
+						targetView = leaf.view as unknown as MarkdownView;
+					}
+				});
+				if (!targetView) return { kind: "not_open", content: null };
+
+				const health = editorBindings.getBindingHealthForView(targetView);
+				if (!health.bound) return { kind: "not_open", content: null };
+				if (health.settling) return { kind: "settling", content: null };
+				if (!health.healthy) return { kind: "unhealthy", content: null };
+
+				let content: string | null = null;
+				try {
+					const view = targetView as unknown as { editor?: { getValue?: () => string } };
+					content = view.editor?.getValue?.() ?? null;
+				} catch {
+					content = null;
+				}
+				return { kind: "healthy_sampled", content };
+			},
+		});
+
+		// Wire Y.Text observers for any-origin transaction dirty triggers (Req 3.1).
+		const vs = this.vaultSync;
+		if (vs) {
+			this._witnessTextObservers = new Map();
+			const tracker = this.deviceWitnessTracker;
+
+			const attachTextObserver = (fileId: string, ytext: import("yjs").Text) => {
+				if (this._witnessTextObservers?.has(fileId)) return;
+				const handler = (_event: unknown, txn: { origin: unknown }) => {
+					// Find path for this fileId.
+					let path: string | undefined;
+					vs.meta.forEach((meta, id) => {
+						if (id === fileId && typeof meta.path === "string") path = meta.path;
+					});
+					if (!path || !path.endsWith(".md")) return;
+					const originClass = isLocalOrigin(txn.origin, vs.provider) ? "local-edit" : "remote-apply";
+					tracker?.markDirty(path, originClass);
+				};
+				(ytext as unknown as { observe: (h: typeof handler) => void }).observe(handler);
+				this._witnessTextObservers?.set(fileId, { ytext, handler });
+			};
+
+			// Attach to all existing texts.
+			vs.idToText.forEach((ytext, fileId) => attachTextObserver(fileId, ytext));
+
+			// Observe new texts added to idToText.
+			const idToTextHandler = () => {
+				vs.idToText.forEach((ytext, fileId) => attachTextObserver(fileId, ytext));
+			};
+			vs.idToText.observe(idToTextHandler);
+			this._witnessIdToTextHandler = idToTextHandler;
+
+			// Observe meta map for tombstone transitions (Req 3.4).
+			const metaHandler = () => {
+				vs.meta.forEach((meta, fileId) => {
+					void fileId;
+					const path = typeof meta.path === "string" ? meta.path : undefined;
+					if (!path || !path.endsWith(".md")) return;
+					if (vs.isFileMetaDeleted(meta)) {
+						tracker?.markDirty(path, "tombstone");
+					}
+				});
+			};
+			vs.meta.observe(metaHandler);
+			this._witnessMetaHandler = metaHandler;
+		}
+	}
+
+	private _witnessTextObservers: Map<string, { ytext: import("yjs").Text; handler: (...args: unknown[]) => void }> | null = null;
+	private _witnessIdToTextHandler: (() => void) | null = null;
+	private _witnessMetaHandler: (() => void) | null = null;
+
+	private _stopDeviceWitnessTracker(): void {
+		if (this._witnessTextObservers) {
+			for (const { ytext, handler } of this._witnessTextObservers.values()) {
+				try { (ytext as unknown as { unobserve: (h: typeof handler) => void }).unobserve(handler); } catch { /* ignore */ }
+			}
+			this._witnessTextObservers = null;
+		}
+		if (this._witnessIdToTextHandler && this.vaultSync) {
+			try { this.vaultSync.idToText.unobserve(this._witnessIdToTextHandler); } catch { /* ignore */ }
+			this._witnessIdToTextHandler = null;
+		}
+		if (this._witnessMetaHandler && this.vaultSync) {
+			try { this.vaultSync.meta.unobserve(this._witnessMetaHandler); } catch { /* ignore */ }
+			this._witnessMetaHandler = null;
+		}
+		this.deviceWitnessTracker?.dispose();
+		this.deviceWitnessTracker = null;
 	}
 
 	private async exportSafeFlightTrace(): Promise<void> {
@@ -2150,6 +2298,7 @@ export default class VaultCrdtSyncPlugin extends Plugin {
 					this.log(`QA connectProvider error: ${String(e)}`),
 				);
 			},
+			getDeviceWitnessTracker: () => this.deviceWitnessTracker,
 		});
 		(window as unknown as Record<string, unknown>).__YAOS_DEBUG__ = api;
 		this.log("QA debug API mounted at window.__YAOS_DEBUG__");
