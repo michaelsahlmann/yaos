@@ -253,6 +253,22 @@ export interface YaosQaDebugApi {
 	__qaOnlyTriggerWitnessDirtyUnsafe?(path: string): void;
 
 	/**
+	 * Phase 3: Set the cross-device scenario run identity.
+	 * Must be called before any witness event is emitted under the run.
+	 * No-op if no flight trace is active.
+	 */
+	__qaOnlySetScenarioRunIdUnsafe?(scenarioRunId: string, scenarioId: string): void;
+
+	/**
+	 * Phase 3: Advance the scenario step index.
+	 * stepIndex must be a non-negative integer strictly greater than the current step.
+	 * Requires scenarioRunId to be set first.
+	 * Emits a qa.scenario.step flight event.
+	 * No-op if no flight trace is active.
+	 */
+	__qaOnlyAdvanceScenarioStepUnsafe?(stepIndex: number, label?: string): void;
+
+	/**
 	 * QA-ONLY. Unsafe.
 	 *
 	 * Sets an in-memory-only external edit policy override.
@@ -814,6 +830,48 @@ export function buildQaDebugApi(plugin: PluginHandle): YaosQaDebugApi {
 			});
 			if (segments.length === 0) return null;
 			return segments.map((s) => s.content).join("");
+		},
+
+		__qaOnlySetScenarioRunIdUnsafe(scenarioRunId: string, scenarioId: string): void {
+			plugin.getDeviceWitnessTracker?.()?.setScenarioRunId(scenarioRunId, scenarioId);
+		},
+
+		__qaOnlyAdvanceScenarioStepUnsafe(stepIndex: number, label?: string): void {
+			const tracker = plugin.getDeviceWitnessTracker?.();
+			if (!tracker) return;
+			const state = tracker.getScenarioStepState();
+			const NoticeClass = (app as unknown as { Notice?: new (msg: string) => void }).Notice;
+			if (!state.scenarioRunId) {
+				if (NoticeClass) new NoticeClass("set scenarioRunId via 'YAOS QA: Set scenario run ID' first");
+				return;
+			}
+			if (!Number.isInteger(stepIndex) || stepIndex < 0) {
+				if (NoticeClass) new NoticeClass(`scenarioStepIndex must be a non-negative integer, got: ${stepIndex}`);
+				return;
+			}
+			if (state.stepIndex !== null && stepIndex <= state.stepIndex) {
+				if (NoticeClass) new NoticeClass(`scenarioStepIndex must be strictly greater than current (${state.stepIndex}), got: ${stepIndex}`);
+				return;
+			}
+			const ok = tracker.advanceScenarioStep(stepIndex, label);
+			if (!ok) return;
+			// Emit qa.scenario.step flight event
+			plugin.getFlightTraceController()?.record({
+				priority: "important",
+				kind: FLIGHT_KIND.qaScenarioStep,
+				severity: "info",
+				scope: "diagnostics",
+				source: "diagnostics",
+				layer: "diagnostics",
+				data: {
+					scenarioRunId: state.scenarioRunId,
+					scenarioId: state.scenarioId,
+					scenarioStepIndex: stepIndex,
+					stepLabel: label,
+					deviceId: api.getDeviceId(),
+					enteredAt: new Date().toISOString(),
+				},
+			});
 		},
 	};
 
