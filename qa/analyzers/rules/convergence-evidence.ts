@@ -62,9 +62,9 @@ function isTransientOpenEditorDiskLag(e: WitnessEvent): boolean {
 	const d = e.data ?? {};
 	if (String(d.reason ?? "") !== "disk_crdt_mismatch") return false;
 	if (!d.fileOpen) return false;
-	// editorSampleKind=healthy_sampled means the editor binding is healthy and in sync with CRDT.
-	// The disk lag is the only issue — DiskMirror open-write deferral window (OPEN_FILE_IDLE_MS=1500ms).
-	// Note: editorHash is not present in diverged events; healthy_sampled is the proxy.
+	// editorSampleKind=healthy_sampled is used as proxy evidence that the editor was in sync with CRDT.
+	// editorHash is not present in diverged events, so editorHash===crdtHash cannot be directly verified.
+	// Final convergence must separately prove editorHash==crdtHash==diskHash on the resolving settled event.
 	if (String(d.editorSampleKind ?? "") !== "healthy_sampled") return false;
 	return true;
 }

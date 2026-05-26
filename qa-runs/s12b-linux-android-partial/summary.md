@@ -1,9 +1,20 @@
-# s12b-linux-android-background-quorum — PASS
+# s12b-linux-android-background-quorum — PARTIAL / INCONCLUSIVE
 
 **Date**: 2026-05-24T09:49:00Z
 **scenarioRunId**: s12b-linux-android-2026-05-24-v2
 **scenarioId**: s12b-linux-android-background-quorum
 **qaTraceSecretHash**: sha256:9eaa2ab7e85695a5d8c4fc7c12f78239dcb6c3e73f308a79e69ba25f873bd894
+
+## Status: PARTIAL — not a full background semantics proof
+
+This run proves: **Android settles correctly after foregrounding.**
+
+It does NOT prove:
+- The `unavailable` divergence fired while backgrounded (it did fire in the tracker but was not captured in checkpoint segments — see Known Limitation below)
+- The background guard is correctly classified as `partial_optional_missing` in a quorum context
+- Foreground required quorum passes while background optional device is absent
+
+The bundle shows `runtimeState: foreground` and a post-foreground settled event. This is a foreground witness, not a background witness.
 
 ## Devices
 

@@ -175,13 +175,16 @@ const DIAGNOSTICS_CLASS = new Set(["checkpoint_write_failed", "checkpoint_path_i
 /**
  * Classify a disk_crdt_mismatch event as transient_open_editor_disk_lag when:
  *   - fileOpen = true
- *   - editorSampleKind = healthy_sampled
- *   - editorHash === crdtHash  (editor and CRDT agree; only disk lags)
+ *   - editorSampleKind = healthy_sampled (proxy: editor binding was healthy at sample time)
+ *
+ * Note: diverged events do not carry editorHash, so editorHash===crdtHash cannot be
+ * directly verified here. healthy_sampled is used as proxy evidence that the editor
+ * was in sync with CRDT. Final convergence (analyzeConvergenceEvidence) must separately
+ * prove editorHash == crdtHash == diskHash on the resolving settled event.
  *
  * This is diagnostic severity, not a correctness failure. It occurs during the
  * DiskMirror open-write deferral window (OPEN_FILE_IDLE_MS = 1500ms) when a file
- * is opened in the editor. The editor and CRDT are in sync; only the disk write
- * is pending. Categorically different from a real disk/CRDT divergence.
+ * is opened in the editor. Only the disk write is pending; the editor and CRDT agree.
  */
 function isTransientOpenEditorDiskLag(e: WitnessEvent): boolean {
 	if (e.kind !== "device.witness.diverged") return false;
@@ -391,7 +394,7 @@ function main(): void {
 			seq: e.seq,
 			classification: "transient_open_editor_disk_lag",
 			severity: "diagnostic",
-			note: "disk_crdt_mismatch with fileOpen=true, editorSampleKind=healthy_sampled, editorHash===crdtHash. DiskMirror open-write deferral window. Not a correctness failure.",
+			note: "disk_crdt_mismatch with fileOpen=true, editorSampleKind=healthy_sampled (proxy for editor/CRDT agreement). DiskMirror open-write deferral window. Diagnostic only if final convergence proves editorHash==crdtHash==diskHash.",
 			data: e.data,
 		}));
 

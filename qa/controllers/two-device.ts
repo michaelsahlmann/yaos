@@ -3303,7 +3303,9 @@ const TWO_DEVICE_SCENARIOS: Record<string, TwoDeviceScenarioFn> = {
 			}
 		}
 		const bufBFinalThisRun = bufBFinal.filter((e) => e.seq > seqAnchorB);
-		const FORBIDDEN = ["stale_hash_after_newer_witness", "recovery_emitted_old_hash", "editor_crdt_mismatch", "disk_crdt_mismatch"];
+		// disk_crdt_mismatch is NOT forbidden here — transient open-editor disk lag is classified as diagnostic
+		// by the offline analyzer. Persistent disk_crdt_mismatch will still fail analyzeWitnessQuorum.
+		const FORBIDDEN = ["stale_hash_after_newer_witness", "recovery_emitted_old_hash", "editor_crdt_mismatch"];
 		for (const e of bufBFinalThisRun) {
 			if (e.kind === "diverged") {
 				const reason = String(e.data.reason ?? "");
@@ -3373,13 +3375,12 @@ const TWO_DEVICE_SCENARIOS: Record<string, TwoDeviceScenarioFn> = {
 			try {
 				const report = JSON.parse(require("fs").readFileSync(`${outDir}/report.json`, "utf-8")) as Record<string, unknown>;
 				const rules = (report.rules as Array<Record<string, unknown>>) ?? [];
-				const convergence = rules.find((r) => r.ruleName === "analyzeConvergenceEvidence");
-				if (convergence && !convergence.ok) {
-					errors.push(`s13: convergence evidence failed: ${convergence.summary}`);
+				// transient_open_editor_disk_lag is the only non-fatal analyzer observation
+				const fatalFailed = rules.filter((r) => !r.ok);
+				if (fatalFailed.length > 0) {
+					const summary = fatalFailed.map((r) => `${r.ruleName}: ${r.summary}`).join("; ");
+					errors.push(`s13: offline analyzer failed: ${summary}`);
 				}
-				// Log which rules failed for the record
-				const failed = rules.filter((r) => !r.ok).map((r) => r.ruleName).join(", ");
-				log(`s13: analyzer rules failed (non-fatal for transient divergences): ${failed}`);
 			} catch { errors.push(`s13: offline analyzer failed`); }
 		}
 
@@ -3535,8 +3536,11 @@ const TWO_DEVICE_SCENARIOS: Record<string, TwoDeviceScenarioFn> = {
 			try {
 				const report = JSON.parse(require("fs").readFileSync(`${outDir}/report.json`, "utf-8")) as Record<string, unknown>;
 				const rules = (report.rules as Array<Record<string, unknown>>) ?? [];
-				const failed = rules.filter((r) => !r.ok).map((r) => String(r.ruleName) + ": " + String(r.summary)).join("; ");
-				log(`s12a-edit: analyzer failures (non-fatal): ${failed}`);
+				const fatalFailed = rules.filter((r) => !r.ok);
+				if (fatalFailed.length > 0) {
+					const summary = fatalFailed.map((r) => `${r.ruleName}: ${r.summary}`).join("; ");
+					errors.push(`s12a-edit: offline analyzer failed: ${summary}`);
+				}
 			} catch { errors.push("s12a-edit: offline analyzer failed"); }
 		}
 
@@ -3650,8 +3654,10 @@ const TWO_DEVICE_SCENARIOS: Record<string, TwoDeviceScenarioFn> = {
 			errors.push(`s12c: SEMANTIC FAIL -- artifact does not contain REMOTE_FROM_A`);
 		}
 
-		const artifactOnA = artifactPath ? await a.evalRaw<boolean>(`!!app.vault.getFileByPath(${JSON.stringify(artifactPath)})`) : false;
-		if (artifactOnA) errors.push("s12c: Conflict artifact exists on A (should be local-only on B)");
+		// Search for ANY conflict artifact for the s12c logical file on A, not just the exact B path
+		const artifactsOnA = await a.evalRaw<string[]>(`app.vault.getMarkdownFiles().filter(f=>f.path.includes("s12c-conflict")&&f.path.includes("YAOS conflict")).map(f=>f.path)`);
+		const artifactOnA = Array.isArray(artifactsOnA) && artifactsOnA.length > 0;
+		if (artifactOnA) errors.push(`s12c: Conflict artifact(s) exist on A (should be local-only on B): ${JSON.stringify(artifactsOnA)}`);
 		log(`s12c: artifact on A: ${artifactOnA} (expected: false)`);
 
 		await b.evalRaw(`window.__YAOS_DEBUG__?.startFlightTrace("qa-safe", ${JSON.stringify(QA_SECRET)})`).catch(() => {});

@@ -2263,6 +2263,10 @@ export default class VaultCrdtSyncPlugin extends Plugin {
 		btn.addEventListener("click", () => {
 			const stepIndex = parseInt(stepInput.value.trim(), 10);
 			if (isNaN(stepIndex) || stepIndex < 0) { new Notice("Enter a non-negative integer.", 4000); return; }
+			if (currentStep !== null && stepIndex <= currentStep) {
+				new Notice(`Step must be greater than current step (${currentStep}).`, 4000);
+				return;
+			}
 			const label = labelInput.value.trim() || undefined;
 			api.__qaOnlyAdvanceScenarioStepUnsafe?.(stepIndex, label);
 			new Notice(`Scenario step advanced to ${stepIndex}${label ? ` (${label})` : ""}`, 4000);
