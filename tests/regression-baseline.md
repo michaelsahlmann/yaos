@@ -1,5 +1,11 @@
 # Regression Baseline
 
+## Repo prevention
+
+`npm run guard:no-src-js-artifacts` (wired into `test:regressions`) fails immediately if stale `.js` or `.js.map` files exist under `src/sync`, `src/settings`, `src/runtime`, `src/debug`, or `src/diagnostics`.
+
+To clean: `npm run clean:src-js-artifacts`
+
 ## Current state: 60 passed, 0 failed
 
 All pre-existing failures resolved in commit that deleted stale `.js` artifacts from `src/`.
@@ -10,7 +16,7 @@ All pre-existing failures resolved in commit that deleted stale `.js` artifacts 
 
 When JITI loaded test files that imported from `src/sync/stateVectorAck` (no extension), it found `stateVectorAck.js` first (native ESM, because `package.json` has `"type": "module"`). The `.js` file used `var Y = require("yjs")` (CommonJS), which loaded a different Yjs instance than the test's `import * as Y from "yjs"`. State vectors encoded by one Yjs instance could not be decoded by another, causing all `isStateVectorGe` calls to return incorrect results.
 
-**Fix**: deleted all `.js` files from `src/`. esbuild reads `.ts` directly; JITI now falls back to `.ts` files correctly.
+**Fix**: deleted local untracked `.js` artifacts from `src/` (they were gitignored, so no git change). Added `guard:no-src-js-artifacts` wired into `test:regressions` to prevent recurrence.
 
 ## Suites that were failing (now all pass)
 
