@@ -1,5 +1,36 @@
 # Regression Baseline
 
+## Current state: 60 passed, 0 failed
+
+All pre-existing failures resolved in commit that deleted stale `.js` artifacts from `src/`.
+
+## Root cause of the 7 pre-existing failures
+
+**Not semantic regressions.** All 7 failures were caused by stale compiled `.js` artifacts in `src/sync/` and `src/settings/` left over from an old `tsc` compilation run.
+
+When JITI loaded test files that imported from `src/sync/stateVectorAck` (no extension), it found `stateVectorAck.js` first (native ESM, because `package.json` has `"type": "module"`). The `.js` file used `var Y = require("yjs")` (CommonJS), which loaded a different Yjs instance than the test's `import * as Y from "yjs"`. State vectors encoded by one Yjs instance could not be decoded by another, causing all `isStateVectorGe` calls to return incorrect results.
+
+**Fix**: deleted all `.js` files from `src/`. esbuild reads `.ts` directly; JITI now falls back to `.ts` files correctly.
+
+## Suites that were failing (now all pass)
+
+```
+tests/disk-mirror-origin-classification.ts  — was: Yjs double-import
+tests/reconciliation-safety-brake.ts        — was: Yjs double-import
+tests/blob-download-conflicts.ts            — was: Yjs double-import (TFile mock)
+tests/disk-mirror-observer.ts               — was: Yjs double-import (normalizePath mock)
+tests/state-vector-ack.ts                   — was: Yjs double-import → wrong isStateVectorGe results
+tests/sv-echo-client-receiver.ts            — was: Yjs double-import → wrong ack semantics
+tests/server-ack-tracker.ts                 — was: Yjs double-import → wrong ack semantics
+```
+
+## Verification
+
+```
+npm run build    → PASS
+npm run test:regressions → 60 passed, 0 failed
+```
+
 ## Pre-existing failures (7 suites, unchanged since Layer 4 Phase 1)
 
 These 7 suites fail on `main` and are not caused by Layer 4 changes.
