@@ -46,6 +46,8 @@ export interface SnapshotResult {
 	reason?: string;
 	index?: SnapshotIndex;
 	error?: string;
+	/** True if the manual snapshot has the same semantic content as the previous one. */
+	semanticUnchanged?: boolean;
 }
 
 /**

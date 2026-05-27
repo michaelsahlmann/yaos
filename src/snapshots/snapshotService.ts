@@ -85,10 +85,13 @@ export class SnapshotService {
 				this.deps.getTraceHttpContext(),
 			);
 			if (result.status === "created" && result.index) {
+				const unchangedNote = result.semanticUnchanged
+					? " (note: vault content unchanged since last snapshot)"
+					: "";
 				new Notice(
 					`Snapshot created: ${result.index.markdownFileCount} notes, ` +
 					`${result.index.blobFileCount} attachments ` +
-					`(${Math.round(result.index.crdtSizeBytes / 1024)} KB)`,
+					`(${Math.round(result.index.crdtSizeBytes / 1024)} KB)${unchangedNote}`,
 				);
 			} else if (result.status === "unavailable") {
 				new Notice(`Snapshot unavailable: ${result.reason ?? "R2 not configured"}`);

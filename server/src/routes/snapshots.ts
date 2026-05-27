@@ -157,13 +157,15 @@ async function createSnapshotFromLiveDoc(
 	vaultId: string,
 	triggeredBy: string | undefined,
 	fetchVaultDocument: (env: Env, vaultId: string) => Promise<Uint8Array>,
-): Promise<SnapshotResult> {
+): Promise<SnapshotResult & { semanticUnchanged?: boolean }> {
 	if (!env.YAOS_BUCKET) {
 		return {
 			status: "unavailable",
 			reason: "R2 bucket not configured",
 		};
 	}
+
+	const previous = await getLatestSnapshotIndex(vaultId, env.YAOS_BUCKET);
 
 	const update = await fetchVaultDocument(env, vaultId);
 	const doc = new Y.Doc();
@@ -172,9 +174,17 @@ async function createSnapshotFromLiveDoc(
 	}
 
 	const index = await createSnapshot(doc, vaultId, env.YAOS_BUCKET, triggeredBy);
+
+	const semanticUnchanged = !!(
+		previous?.semanticHash &&
+		index.semanticHash &&
+		previous.semanticHash === index.semanticHash
+	);
+
 	return {
 		status: "created",
 		snapshotId: index.snapshotId,
 		index,
+		semanticUnchanged,
 	};
 }
