@@ -121,15 +121,27 @@ export async function handleSnapshotRoute(
 			return json({ error: "snapshots_unavailable" }, 503);
 		}
 
-		let body: { pruneLegacy?: boolean } = {};
+		let body: { pruneLegacy?: boolean; confirmLegacyPrune?: string } = {};
 		try {
 			body = await req.json();
 		} catch {
 			body = {};
 		}
 
+		// Safety latch: pruneLegacy requires explicit confirmation string.
+		// Legacy snapshots have unknown origin — deleting them is destructive
+		// and irreversible. Make it ugly on purpose.
+		const pruneLegacy = body.pruneLegacy === true &&
+			body.confirmLegacyPrune === "DELETE_LEGACY_SNAPSHOTS";
+
+		if (body.pruneLegacy === true && !pruneLegacy) {
+			return json({
+				error: "pruneLegacy requires confirmLegacyPrune: 'DELETE_LEGACY_SNAPSHOTS'",
+			}, 400);
+		}
+
 		const result = await applyRetention(vaultId, env.YAOS_BUCKET, undefined, {
-			pruneLegacy: body.pruneLegacy === true,
+			pruneLegacy,
 		});
 		await options.recordVaultTrace(env, vaultId, "snapshot-retention-applied", {
 			kept: result.kept,

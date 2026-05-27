@@ -57,12 +57,15 @@ function assertEqual<T>(actual: T, expected: T, msg: string): void {
 	}
 }
 
+const instances: Miniflare[] = [];
+
 async function getBucket(): Promise<R2Bucket> {
 	const mf = new Miniflare({
 		modules: true,
 		script: "export default { fetch() { return new Response('ok'); } }",
 		r2Buckets: ["BUCKET"],
 	});
+	instances.push(mf);
 	return await mf.getR2Bucket("BUCKET");
 }
 
@@ -471,6 +474,11 @@ async function main(): Promise<void> {
 	console.log("\n═══════════════════════════════════════════════");
 	console.log(`RESULTS: ${passed} passed, ${failed} failed`);
 	console.log("═══════════════════════════════════════════════");
+
+	// Dispose all Miniflare instances to allow clean process exit.
+	for (const mf of instances) {
+		await mf.dispose();
+	}
 
 	if (failed > 0) {
 		process.exit(1);

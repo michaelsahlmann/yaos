@@ -190,6 +190,11 @@ export async function computeFullUpdateHash(ydoc: Y.Doc): Promise<string> {
  * but does NOT detect content edits to existing files (fileId is stable across edits).
  *
  * Named "structure" (not "semantic") to avoid implying it captures content changes.
+ *
+ * WARNING: Do not use this for content dedup or snapshot skip decisions.
+ * It uses pathToId only (does not consider v2 meta path model) and misses
+ * all Markdown content changes. It exists for diagnostics and future CAS
+ * manifest dedup where structure-only comparison is explicitly desired.
  */
 export async function computeStructureHash(ydoc: Y.Doc): Promise<string> {
 	const pathToId = ydoc.getMap<string>("pathToId");
@@ -256,10 +261,15 @@ export async function getLatestSnapshotIndex(
 
 /**
  * Verify that the snapshot referenced by a latest-index pointer actually
- * exists in storage (both payload and index objects are present).
+ * exists in storage and is consistent with the pointer metadata.
+ *
+ * Checks:
+ *   1. Both payload (crdt.bin.gz) and index (index.json) objects exist.
+ *   2. The stored index.json matches the pointer's snapshotId and fullUpdateHash.
+ *   3. The payload size matches index.crdtSizeBytes (if R2 reports size).
  *
  * This prevents "poisoned pointer" scenarios where latest-index.json
- * references a snapshot whose payload was never durably written.
+ * references a snapshot that is missing, corrupt, or inconsistent.
  */
 export async function verifySnapshotExists(
 	vaultId: string,
@@ -267,11 +277,34 @@ export async function verifySnapshotExists(
 	bucket: R2Bucket,
 ): Promise<boolean> {
 	const prefix = snapshotPrefix(vaultId, index.day, index.snapshotId);
-	const [payloadHead, indexHead] = await Promise.all([
+	const [payloadHead, indexObj] = await Promise.all([
 		bucket.head(`${prefix}/crdt.bin.gz`),
-		bucket.head(`${prefix}/index.json`),
+		bucket.get(`${prefix}/index.json`),
 	]);
-	return payloadHead !== null && indexHead !== null;
+
+	// Payload must exist
+	if (!payloadHead) return false;
+
+	// Index must exist and be parseable
+	if (!indexObj) return false;
+	let storedIndex: SnapshotIndex;
+	try {
+		const text = await indexObj.text();
+		storedIndex = JSON.parse(text) as SnapshotIndex;
+	} catch {
+		return false; // Malformed JSON
+	}
+
+	// Verify consistency between pointer and stored index
+	if (storedIndex.snapshotId !== index.snapshotId) return false;
+	if (storedIndex.fullUpdateHash && index.fullUpdateHash &&
+		storedIndex.fullUpdateHash !== index.fullUpdateHash) return false;
+
+	// Verify payload size matches if available
+	if (payloadHead.size !== undefined && storedIndex.crdtSizeBytes > 0 &&
+		payloadHead.size !== storedIndex.crdtSizeBytes) return false;
+
+	return true;
 }
 
 /**
