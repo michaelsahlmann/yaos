@@ -57,6 +57,18 @@ export default tseslint.config(
 		"server/.wrangler",
 		"server/.partykit",
 		"tests",
+		// QA harness, analyzers, and run artifacts.
+		// `qa/` contains both .ts sources and emitted .js artifacts (e.g.
+		// qa/analyzers/analyzer.js sits next to qa/analyzers/analyzer.ts).
+		// The emitted .js files have no parserOptions.project entry in
+		// tsconfig.eslint.json, which causes typed lint rules
+		// (@typescript-eslint/no-deprecated and friends) to throw on rule
+		// load and abort the entire eslint run. The QA harness is a
+		// separate workspace: the .ts sources are linted there if needed,
+		// and the emitted .js artifacts are not source we lint. Same for
+		// qa-runs/ which holds run output bundles and reports.
+		"qa",
+		"qa-runs",
 		"manifest.json",
 		"esbuild.config.mjs",
 		"eslint.config.mts",
