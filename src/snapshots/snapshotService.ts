@@ -7,6 +7,7 @@ import {
 	listSnapshots as fetchSnapshotList,
 	requestDailySnapshot,
 	requestSnapshotNow,
+	requestPrune,
 	restoreFromSnapshot,
 	type SnapshotIndex,
 } from "../sync/snapshotClient";
@@ -137,6 +138,41 @@ export class SnapshotService {
 		} catch (err) {
 			console.error("[yaos] Failed to list snapshots:", err);
 			new Notice(`Failed to list snapshots: ${formatUnknown(err)}`);
+		}
+	}
+
+	/**
+	 * Run server-side retention pruning. Exposed as a user command.
+	 */
+	async pruneSnapshots(): Promise<void> {
+		if (!this.deps.getServerSupportsSnapshots()) {
+			new Notice("Snapshots are unavailable until object storage is configured on the server.");
+			return;
+		}
+		const vaultSync = this.deps.getVaultSync();
+		if (!vaultSync?.connected) {
+			new Notice("Not connected to server.");
+			return;
+		}
+
+		new Notice("Running snapshot cleanup...");
+		try {
+			const result = await requestPrune(
+				this.deps.getSettings(),
+				this.deps.getTraceHttpContext(),
+			);
+			if (result.pruned === 0) {
+				new Notice("No snapshots to prune — retention policy already satisfied.");
+			} else {
+				new Notice(
+					`Cleanup complete: ${result.pruned} old snapshot(s) removed, ${result.kept} retained.` +
+					(result.failed > 0 ? ` (${result.failed} failed)` : ""),
+				);
+			}
+			this.deps.log(`Snapshot prune: kept=${result.kept} pruned=${result.pruned} failed=${result.failed}`);
+		} catch (err) {
+			console.error("[yaos] Snapshot prune failed:", err);
+			new Notice(`Snapshot cleanup failed: ${formatUnknown(err)}`);
 		}
 	}
 

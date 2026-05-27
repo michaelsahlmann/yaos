@@ -7,6 +7,10 @@ import { readRoomMeta, type RoomMeta, writeRoomMeta } from "./roomMeta";
 import {
 	createSnapshot,
 	hasSnapshotForDay,
+	getLatestSnapshotIndex,
+	computeStateVectorHash,
+	computeSemanticHash,
+	applyRetention,
 	type SnapshotResult,
 } from "./snapshot";
 import {
@@ -587,20 +591,39 @@ export class VaultSyncServer extends YServer {
 					} satisfies SnapshotResult;
 				}
 
-				const currentDay = new Date().toISOString().slice(0, 10);
-				if (await hasSnapshotForDay(this.getRoomId(), currentDay, bucket)) {
-					return {
-						status: "noop",
-						reason: `Snapshot already taken today (${currentDay})`,
-					} satisfies SnapshotResult;
+				const vaultId = this.getRoomId();
+
+				// Fast path: check if semantic state has changed since latest snapshot.
+				const latest = await getLatestSnapshotIndex(vaultId, bucket);
+				if (latest?.semanticHash) {
+					const currentSemanticHash = await computeSemanticHash(this.document);
+					if (latest.semanticHash === currentSemanticHash) {
+						return {
+							status: "noop",
+							reason: "Semantic vault state unchanged since last snapshot",
+						} satisfies SnapshotResult;
+					}
+				} else {
+					// Legacy path: fall back to day-based dedup if no semantic hash.
+					const currentDay = new Date().toISOString().slice(0, 10);
+					if (await hasSnapshotForDay(vaultId, currentDay, bucket)) {
+						return {
+							status: "noop",
+							reason: `Snapshot already taken today (${currentDay})`,
+						} satisfies SnapshotResult;
+					}
 				}
 
 				const index = await createSnapshot(
 					this.document,
-					this.getRoomId(),
+					vaultId,
 					bucket,
 					triggeredBy,
 				);
+
+				// Opportunistic retention (non-blocking)
+				applyRetention(vaultId, bucket).catch(() => {});
+
 				return {
 					status: "created",
 					snapshotId: index.snapshotId,

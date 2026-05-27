@@ -4,6 +4,8 @@ import {
 	createSnapshot,
 	getSnapshotPayload,
 	listSnapshots,
+	applyRetention,
+	getLatestSnapshotIndex,
 	type SnapshotResult,
 } from "../snapshot";
 import type { Env, JsonResponse } from "./types";
@@ -80,8 +82,44 @@ export async function handleSnapshotRoute(
 			return json({ error: "snapshots_unavailable" }, 503);
 		}
 
-		const snapshots = await listSnapshots(vaultId, env.YAOS_BUCKET);
-		return json({ snapshots });
+		const url = new URL(req.url);
+		const limitParam = url.searchParams.get("limit");
+		const limit = limitParam ? Math.min(Math.max(1, parseInt(limitParam, 10) || 50), 200) : 50;
+
+		const snapshots = await listSnapshots(vaultId, env.YAOS_BUCKET, limit);
+		return json({ snapshots, total: snapshots.length, limited: snapshots.length === limit });
+	}
+
+	if (req.method === "GET" && rest.length === 1 && rest[0] === "status") {
+		if (!env.YAOS_BUCKET) {
+			return json({ error: "snapshots_unavailable" }, 503);
+		}
+
+		const latest = await getLatestSnapshotIndex(vaultId, env.YAOS_BUCKET);
+		const all = await listSnapshots(vaultId, env.YAOS_BUCKET, 200);
+		const totalCrdtBytes = all.reduce((sum, s) => sum + s.crdtSizeBytes, 0);
+
+		return json({
+			snapshotCount: all.length,
+			latestSnapshotId: latest?.snapshotId ?? null,
+			latestCreatedAt: latest?.createdAt ?? null,
+			estimatedStorageBytes: totalCrdtBytes,
+			pinnedCount: all.filter((s) => s.pinned).length,
+		});
+	}
+
+	if (req.method === "POST" && rest.length === 1 && rest[0] === "prune") {
+		if (!env.YAOS_BUCKET) {
+			return json({ error: "snapshots_unavailable" }, 503);
+		}
+
+		const result = await applyRetention(vaultId, env.YAOS_BUCKET);
+		await options.recordVaultTrace(env, vaultId, "snapshot-retention-applied", {
+			kept: result.kept,
+			pruned: result.pruned,
+			failed: result.failed,
+		});
+		return json(result);
 	}
 
 	if (req.method === "GET" && rest.length === 1) {

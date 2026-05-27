@@ -34,6 +34,9 @@ export interface SnapshotIndex {
 	crdtRawSizeBytes: number;
 	referencedBlobHashes: string[];
 	triggeredBy?: string;
+	stateVectorHash?: string;
+	semanticHash?: string;
+	pinned?: boolean;
 }
 
 export interface SnapshotResult {
@@ -238,14 +241,42 @@ export async function requestSnapshotNow(
 // -------------------------------------------------------------------
 
 /**
- * List all available snapshots, newest first.
+ * List all available snapshots, newest first (bounded by server limit).
  */
 export async function listSnapshots(
 	settings: VaultSyncSettings,
 	trace?: TraceHttpContext,
 ): Promise<SnapshotIndex[]> {
-	const result = await serverGet(settings, "snapshots", trace) as { snapshots: SnapshotIndex[] };
+	const result = await serverGet(settings, "snapshots?limit=50", trace) as { snapshots: SnapshotIndex[] };
 	return result.snapshots ?? [];
+}
+
+/**
+ * Request server-side retention pruning.
+ */
+export async function requestPrune(
+	settings: VaultSyncSettings,
+	trace?: TraceHttpContext,
+): Promise<{ kept: number; pruned: number; failed: number }> {
+	return await serverPost(settings, "snapshots/prune", {}, trace) as { kept: number; pruned: number; failed: number };
+}
+
+/**
+ * Get snapshot storage status summary.
+ */
+export interface SnapshotStatus {
+	snapshotCount: number;
+	latestSnapshotId: string | null;
+	latestCreatedAt: string | null;
+	estimatedStorageBytes: number;
+	pinnedCount: number;
+}
+
+export async function getSnapshotStatus(
+	settings: VaultSyncSettings,
+	trace?: TraceHttpContext,
+): Promise<SnapshotStatus> {
+	return await serverGet(settings, "snapshots/status", trace) as SnapshotStatus;
 }
 
 // -------------------------------------------------------------------

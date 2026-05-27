@@ -24,6 +24,20 @@ export class SnapshotListModal extends Modal {
 			cls: "setting-item-description",
 		});
 
+		// Storage warning for large snapshot counts
+		const totalBytes = this.snapshots.reduce((sum, s) => sum + s.crdtSizeBytes, 0);
+		const totalMB = totalBytes / (1024 * 1024);
+		if (this.snapshots.length > 30 || totalMB > 50) {
+			const warning = contentEl.createDiv({ cls: "snapshot-storage-warning" });
+			warning.createEl("p", {
+				text: `Storage: ${this.snapshots.length} snapshots using ~${totalMB.toFixed(1)} MB. ` +
+					`Consider pruning old snapshots to reduce storage usage.`,
+			});
+			warning.style.color = "var(--text-error)";
+			warning.style.marginBottom = "8px";
+			warning.style.fontSize = "0.85em";
+		}
+
 		const list = contentEl.createDiv({ cls: "snapshot-list" });
 
 		for (const snap of this.snapshots) {
