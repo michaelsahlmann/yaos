@@ -9,6 +9,7 @@ import {
 	requestSnapshotNow,
 	requestPrune,
 	restoreFromSnapshot,
+	normalizeSnapshotUnchanged,
 	type SnapshotIndex,
 } from "../sync/snapshotClient";
 import { VaultSync } from "../sync/vaultSync";
@@ -86,7 +87,7 @@ export class SnapshotService {
 			);
 			if (result.status === "created" && result.index) {
 				// Handle both new and old server response field names
-				const identical = result.snapshotIdenticalToLatest ?? result.semanticUnchanged;
+				const identical = normalizeSnapshotUnchanged(result);
 				const unchangedNote = identical
 					? " (note: identical to latest snapshot)"
 					: "";
