@@ -118,6 +118,11 @@ const suites = [
 	[JITI, "tests/witness-identity-command.ts"],
 	[JITI, "tests/witness-persistence-isolation.ts"],
 	[JITI, "tests/witness-scenario-step.ts"],
+	// Snapshot safety tests (Phase 0 tourniquet)
+	[JITI, "tests/snapshot-retention.ts"],
+	[JITI, "tests/snapshots.ts"],
+	[JITI, "tests/snapshot-compat.ts"],
+	[NODE, "tests/snapshot-r2-runner.mjs"],
 ];
 
 let totalPassed = 0;
