@@ -6,6 +6,7 @@ import {
 	listSnapshots,
 	applyRetention,
 	getLatestSnapshotIndex,
+	computeStructureHash,
 	type SnapshotResult,
 } from "../snapshot";
 import type { Env, JsonResponse } from "./types";
@@ -86,8 +87,13 @@ export async function handleSnapshotRoute(
 		const limitParam = url.searchParams.get("limit");
 		const limit = limitParam ? Math.min(Math.max(1, parseInt(limitParam, 10) || 50), 200) : 50;
 
-		const snapshots = await listSnapshots(vaultId, env.YAOS_BUCKET, limit);
-		return json({ snapshots, total: snapshots.length, limited: snapshots.length === limit });
+		const { snapshots, totalIndexKeys, limited } = await listSnapshots(vaultId, env.YAOS_BUCKET, limit);
+		return json({
+			snapshots,
+			totalIndexKeys,
+			fetchedCount: snapshots.length,
+			limited,
+		});
 	}
 
 	if (req.method === "GET" && rest.length === 1 && rest[0] === "status") {
@@ -96,14 +102,17 @@ export async function handleSnapshotRoute(
 		}
 
 		const latest = await getLatestSnapshotIndex(vaultId, env.YAOS_BUCKET);
-		const all = await listSnapshots(vaultId, env.YAOS_BUCKET, 200);
-		const totalCrdtBytes = all.reduce((sum, s) => sum + s.crdtSizeBytes, 0);
+		// Use a high limit but be honest that it's a lower bound.
+		const { snapshots: all, totalIndexKeys, limited } = await listSnapshots(vaultId, env.YAOS_BUCKET, 200);
+		const fetchedBytes = all.reduce((sum, s) => sum + s.crdtSizeBytes, 0);
 
 		return json({
-			snapshotCount: all.length,
+			snapshotCountLowerBound: totalIndexKeys,
+			listedSnapshotCount: all.length,
+			listingLimited: limited,
+			estimatedStorageBytesLowerBound: fetchedBytes,
 			latestSnapshotId: latest?.snapshotId ?? null,
 			latestCreatedAt: latest?.createdAt ?? null,
-			estimatedStorageBytes: totalCrdtBytes,
 			pinnedCount: all.filter((s) => s.pinned).length,
 		});
 	}
@@ -118,8 +127,9 @@ export async function handleSnapshotRoute(
 			kept: result.kept,
 			pruned: result.pruned,
 			failed: result.failed,
+			errors: result.errors.slice(0, 10),
 		});
-		return json(result);
+		return json({ kept: result.kept, pruned: result.pruned, failed: result.failed });
 	}
 
 	if (req.method === "GET" && rest.length === 1) {
@@ -157,7 +167,7 @@ async function createSnapshotFromLiveDoc(
 	vaultId: string,
 	triggeredBy: string | undefined,
 	fetchVaultDocument: (env: Env, vaultId: string) => Promise<Uint8Array>,
-): Promise<SnapshotResult & { semanticUnchanged?: boolean }> {
+): Promise<SnapshotResult & { structureUnchanged?: boolean }> {
 	if (!env.YAOS_BUCKET) {
 		return {
 			status: "unavailable",
@@ -173,18 +183,21 @@ async function createSnapshotFromLiveDoc(
 		Y.applyUpdate(doc, update);
 	}
 
-	const index = await createSnapshot(doc, vaultId, env.YAOS_BUCKET, triggeredBy);
+	const index = await createSnapshot(doc, vaultId, env.YAOS_BUCKET, {
+		triggeredBy,
+		reason: "manual",
+		pinned: true,
+	});
 
-	const semanticUnchanged = !!(
-		previous?.semanticHash &&
-		index.semanticHash &&
-		previous.semanticHash === index.semanticHash
-	);
+	// Use structureHash for the "unchanged" hint. This honestly tells the user
+	// "the file structure hasn't changed" but does NOT claim content is identical.
+	const prevHash = previous?.structureHash ?? previous?.semanticHash;
+	const structureUnchanged = !!(prevHash && index.structureHash && prevHash === index.structureHash);
 
 	return {
 		status: "created",
 		snapshotId: index.snapshotId,
 		index,
-		semanticUnchanged,
+		structureUnchanged,
 	};
 }

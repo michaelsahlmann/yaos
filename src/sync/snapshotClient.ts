@@ -36,7 +36,10 @@ export interface SnapshotIndex {
 	triggeredBy?: string;
 	stateVectorHash?: string;
 	semanticHash?: string;
+	structureHash?: string;
+	fullUpdateHash?: string;
 	pinned?: boolean;
+	reason?: string;
 }
 
 export interface SnapshotResult {
@@ -46,7 +49,9 @@ export interface SnapshotResult {
 	reason?: string;
 	index?: SnapshotIndex;
 	error?: string;
-	/** True if the manual snapshot has the same semantic content as the previous one. */
+	/** True if the manual snapshot has the same file structure as the previous one. */
+	structureUnchanged?: boolean;
+	/** @deprecated Use structureUnchanged */
 	semanticUnchanged?: boolean;
 }
 
@@ -265,12 +270,15 @@ export async function requestPrune(
 
 /**
  * Get snapshot storage status summary.
+ * Fields are honest lower bounds when the listing was capped.
  */
 export interface SnapshotStatus {
-	snapshotCount: number;
+	snapshotCountLowerBound: number;
+	listedSnapshotCount: number;
+	listingLimited: boolean;
+	estimatedStorageBytesLowerBound: number;
 	latestSnapshotId: string | null;
 	latestCreatedAt: string | null;
-	estimatedStorageBytes: number;
 	pinnedCount: number;
 }
 

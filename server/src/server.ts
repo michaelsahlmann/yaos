@@ -8,7 +8,7 @@ import {
 	createSnapshot,
 	hasSnapshotForDay,
 	getLatestSnapshotIndex,
-	computeStateVectorHash,
+	computeFullUpdateHash,
 	applyRetention,
 	type SnapshotResult,
 } from "./snapshot";
@@ -592,26 +592,27 @@ export class VaultSyncServer extends YServer {
 
 				const vaultId = this.getRoomId();
 
-				// Skip only if the CRDT state vector is completely unchanged.
-				// State vector changes on ANY Yjs operation — content edits,
-				// metadata changes, path changes, blob changes. If it hasn't
-				// changed, literally nothing happened.
+				// Dedup: skip if the full encoded CRDT (including delete set) is unchanged.
+				// We use fullUpdateHash because Yjs state vectors do NOT track deletions.
+				// A state-vector-only check would miss delete-only changes, which is
+				// catastrophic for a recovery system.
 				//
-				// We do NOT skip based on semanticHash alone because it uses
-				// path:fileId pairs as keys and would miss content edits to
-				// existing files. The semanticHash is stored for future use
-				// by the CAS manifest system (dedup of file-level content).
+				// Cost: O(doc size) to encode + hash. Acceptable at daily frequency.
 				const latest = await getLatestSnapshotIndex(vaultId, bucket);
-				if (latest?.stateVectorHash) {
-					const currentSvHash = await computeStateVectorHash(this.document);
-					if (latest.stateVectorHash === currentSvHash) {
+				if (latest?.fullUpdateHash) {
+					const currentHash = await computeFullUpdateHash(this.document);
+					if (latest.fullUpdateHash === currentHash) {
 						return {
 							status: "noop",
-							reason: "No changes since last snapshot",
+							reason: "No changes since last snapshot (full CRDT state identical)",
 						} satisfies SnapshotResult;
 					}
+				} else if (latest?.stateVectorHash) {
+					// Transitional: old snapshot has stateVectorHash but no fullUpdateHash.
+					// Cannot safely skip — state vector misses deletes.
+					// Fall through to create a new snapshot with fullUpdateHash.
 				} else if (latest) {
-					// Legacy path: fall back to day-based dedup if no hashes stored.
+					// Ancient legacy path: no hash fields at all. Day-based dedup.
 					const currentDay = new Date().toISOString().slice(0, 10);
 					if (await hasSnapshotForDay(vaultId, currentDay, bucket)) {
 						return {
@@ -625,11 +626,22 @@ export class VaultSyncServer extends YServer {
 					this.document,
 					vaultId,
 					bucket,
-					triggeredBy,
+					{ triggeredBy, reason: "daily", pinned: false },
 				);
 
-				// Opportunistic retention (non-blocking)
-				applyRetention(vaultId, bucket).catch(() => {});
+				// Retention: await it so failures are observable, but do not
+				// fail the snapshot creation response. Log errors for diagnostics.
+				try {
+					const retentionResult = await applyRetention(vaultId, bucket);
+					if (retentionResult.failed > 0) {
+						console.error(
+							`${LOG_PREFIX} retention: ${retentionResult.failed} delete(s) failed:`,
+							retentionResult.errors.slice(0, 5),
+						);
+					}
+				} catch (err) {
+					console.error(`${LOG_PREFIX} retention failed:`, err);
+				}
 
 				return {
 					status: "created",

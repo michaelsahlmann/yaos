@@ -3,6 +3,12 @@ import { gzipSync } from "fflate";
 import { mapWithConcurrency } from "./concurrency";
 import { sha256Hex, bytesToHex } from "./hex";
 
+// -------------------------------------------------------------------
+// Types
+// -------------------------------------------------------------------
+
+export type SnapshotReason = "daily" | "manual" | "pre-upgrade" | "pre-migration" | "pre-bulk-operation";
+
 export interface SnapshotIndex {
 	snapshotId: string;
 	vaultId: string;
@@ -15,12 +21,29 @@ export interface SnapshotIndex {
 	crdtRawSizeBytes: number;
 	referencedBlobHashes: string[];
 	triggeredBy?: string;
-	/** SHA-256 hex of Y.encodeStateVector(ydoc) — cheap causal-state fingerprint. */
-	stateVectorHash?: string;
-	/** SHA-256 hex of sorted active paths + blob hashes — semantic content fingerprint. */
-	semanticHash?: string;
+	/**
+	 * SHA-256 hex of the full encoded CRDT update (Y.encodeStateAsUpdate).
+	 * This is the only safe dedup gate because it includes both insertions
+	 * and the delete set. State vectors alone miss deletions.
+	 */
+	fullUpdateHash?: string;
+	/**
+	 * SHA-256 hex of sorted active paths + blob hashes.
+	 * Detects structural changes (file add/remove/rename, blob changes)
+	 * but does NOT detect content edits to existing files.
+	 * Named honestly: this is a structure hash, not a semantic hash.
+	 */
+	structureHash?: string;
 	/** Whether this snapshot is pinned (exempt from automatic retention). */
 	pinned?: boolean;
+	/** Why this snapshot was created. Informs retention decisions. */
+	reason?: SnapshotReason;
+
+	// --- Legacy fields (still read, no longer written) ---
+	/** @deprecated Use fullUpdateHash instead. State vector misses deletions. */
+	stateVectorHash?: string;
+	/** @deprecated Renamed to structureHash for honesty. */
+	semanticHash?: string;
 }
 
 export interface SnapshotResult {
@@ -28,6 +51,15 @@ export interface SnapshotResult {
 	snapshotId?: string;
 	reason?: string;
 	index?: SnapshotIndex;
+	/** True if manual snapshot has same structure as previous (content may differ). */
+	structureUnchanged?: boolean;
+}
+
+export interface CreateSnapshotOptions {
+	triggeredBy?: string;
+	reason?: SnapshotReason;
+	/** Explicitly set pinned status. Defaults: manual=true, daily=false. */
+	pinned?: boolean;
 }
 
 // -------------------------------------------------------------------
@@ -113,38 +145,37 @@ export async function hasSnapshotForDay(
 }
 
 // -------------------------------------------------------------------
-// Semantic hash computation
+// Hash computation
 // -------------------------------------------------------------------
 
 /**
- * Compute the state vector hash: SHA-256 of Y.encodeStateVector(ydoc).
- * This is a cheap causal-state fingerprint. If unchanged, the CRDT has
- * received no new operations at all.
+ * Compute the full update hash: SHA-256 of Y.encodeStateAsUpdate(ydoc).
+ * This is the ONLY safe dedup gate. It includes both insertions AND
+ * the delete set, so it correctly detects delete-only changes.
+ *
+ * Cost: O(document size). Acceptable for daily snapshot frequency.
  */
-export async function computeStateVectorHash(ydoc: Y.Doc): Promise<string> {
-	const sv = Y.encodeStateVector(ydoc);
-	return sha256Hex(sv);
+export async function computeFullUpdateHash(ydoc: Y.Doc): Promise<string> {
+	const update = Y.encodeStateAsUpdate(ydoc);
+	return sha256Hex(update);
 }
 
 /**
- * Compute the semantic hash: SHA-256 of sorted active paths and their
- * associated content identifiers (file IDs for markdown, blob hashes for blobs).
+ * Compute the structure hash: SHA-256 of sorted active paths and their
+ * associated structural identifiers (file IDs for markdown, blob hashes for blobs).
  *
- * This detects whether the user-visible vault state has changed, even if the
- * state vector changed due to metadata-only CRDT operations.
+ * This detects structural changes (file add/remove/rename, blob ref changes)
+ * but does NOT detect content edits to existing files (fileId is stable across edits).
+ *
+ * Named "structure" (not "semantic") to avoid implying it captures content changes.
  */
-export async function computeSemanticHash(ydoc: Y.Doc): Promise<string> {
+export async function computeStructureHash(ydoc: Y.Doc): Promise<string> {
 	const pathToId = ydoc.getMap<string>("pathToId");
 	const pathToBlob = ydoc.getMap<unknown>("pathToBlob");
 
-	// Build sorted entries: "md:{path}:{fileId}" and "blob:{path}:{hash}"
 	const entries: string[] = [];
 
 	pathToId.forEach((fileId, path) => {
-		// Include Y.Text content hash proxy: use the fileId + path as identity.
-		// For full semantic equality we'd hash actual text content, but that's
-		// expensive. Use fileId as a stable proxy — content changes cause new
-		// Y.Text operations which change the state vector anyway.
 		entries.push(`md:${path}:${fileId}`);
 	});
 
@@ -161,8 +192,20 @@ export async function computeSemanticHash(ydoc: Y.Doc): Promise<string> {
 	return sha256Hex(payload);
 }
 
+/**
+ * @deprecated Use computeFullUpdateHash instead.
+ * State vector misses deletions. Kept for backward compat reads only.
+ */
+export async function computeStateVectorHash(ydoc: Y.Doc): Promise<string> {
+	const sv = Y.encodeStateVector(ydoc);
+	return sha256Hex(sv);
+}
+
+// Legacy alias
+export const computeSemanticHash = computeStructureHash;
+
 // -------------------------------------------------------------------
-// Latest snapshot index (avoids full listing)
+// Latest snapshot index (avoids full listing for dedup check)
 // -------------------------------------------------------------------
 
 const LATEST_INDEX_KEY_SUFFIX = "latest-index.json";
@@ -191,6 +234,7 @@ export async function getLatestSnapshotIndex(
 
 /**
  * Persist the latest snapshot index pointer for fast retrieval.
+ * MUST be called only after payload and index are durably written.
  */
 async function writeLatestIndex(
 	vaultId: string,
@@ -210,8 +254,16 @@ export async function createSnapshot(
 	ydoc: Y.Doc,
 	vaultId: string,
 	bucket: R2Bucket,
-	triggeredBy?: string,
+	options?: CreateSnapshotOptions | string,
 ): Promise<SnapshotIndex> {
+	// Backwards compat: old callers pass triggeredBy as string
+	const opts: CreateSnapshotOptions = typeof options === "string"
+		? { triggeredBy: options }
+		: options ?? {};
+
+	const reason = opts.reason ?? "daily";
+	const pinned = opts.pinned ?? (reason === "manual" || reason === "pre-upgrade" || reason === "pre-migration");
+
 	const day = today();
 	const snapshotId = generateSnapshotId();
 	const prefix = snapshotPrefix(vaultId, day, snapshotId);
@@ -232,9 +284,10 @@ export async function createSnapshot(
 		}
 	});
 
-	const [stateVectorHash, semanticHash] = await Promise.all([
-		computeStateVectorHash(ydoc),
-		computeSemanticHash(ydoc),
+	// Hash the already-encoded update (avoids double-encoding)
+	const [fullUpdateHash, structureHash] = await Promise.all([
+		sha256Hex(rawUpdate),
+		computeStructureHash(ydoc),
 	]);
 
 	const index: SnapshotIndex = {
@@ -248,11 +301,16 @@ export async function createSnapshot(
 		crdtSizeBytes: compressed.byteLength,
 		crdtRawSizeBytes: rawUpdate.byteLength,
 		referencedBlobHashes,
-		triggeredBy,
-		stateVectorHash,
-		semanticHash,
+		triggeredBy: opts.triggeredBy,
+		fullUpdateHash,
+		structureHash,
+		pinned,
+		reason,
 	};
 
+	// Write payload and index first. Pointer MUST come after.
+	// If pointer writes before payload is durable, we get a corrupt
+	// latest pointer pointing to a non-existent snapshot.
 	await Promise.all([
 		bucket.put(`${prefix}/crdt.bin.gz`, compressed, {
 			httpMetadata: {
@@ -264,24 +322,43 @@ export async function createSnapshot(
 				contentType: "application/json",
 			},
 		}),
-		writeLatestIndex(vaultId, index, bucket),
 	]);
 
+	// Only write latest pointer after payload + index are durable.
+	await writeLatestIndex(vaultId, index, bucket);
+
 	return index;
+}
+
+// -------------------------------------------------------------------
+// Listing
+// -------------------------------------------------------------------
+
+export interface ListSnapshotsResult {
+	snapshots: SnapshotIndex[];
+	/** Number of index keys found (may exceed fetched count). */
+	totalIndexKeys: number;
+	/** True if listing was capped before fetching all indexes. */
+	limited: boolean;
 }
 
 export async function listSnapshots(
 	vaultId: string,
 	bucket: R2Bucket,
 	limit?: number,
-): Promise<SnapshotIndex[]> {
+): Promise<ListSnapshotsResult> {
+	// NOTE: This still does a full key scan. The key listing is unbounded.
+	// A proper v1 catalog would avoid this. For Phase 0, we are honest about
+	// this limitation: we cap *index fetches* but the key scan is O(snapshots).
 	const keys = await listAllKeys(bucket, `v1/${vaultId}/snapshots/`);
 	const indexKeys = keys
 		.filter((key) => key.endsWith("/index.json") && !key.endsWith(LATEST_INDEX_KEY_SUFFIX))
 		.sort()
 		.reverse(); // newest day prefixes first (lexicographic desc of YYYY-MM-DD)
 
+	const totalIndexKeys = indexKeys.length;
 	const bounded = limit ? indexKeys.slice(0, limit) : indexKeys;
+	const limited = limit ? indexKeys.length > limit : false;
 
 	const indexes = await mapWithConcurrency(
 		bounded,
@@ -298,9 +375,11 @@ export async function listSnapshots(
 		},
 	);
 
-	return indexes
+	const snapshots = indexes
 		.filter((index): index is SnapshotIndex => index !== null)
 		.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+
+	return { snapshots, totalIndexKeys, limited };
 }
 
 export async function getSnapshotPayload(
@@ -308,7 +387,7 @@ export async function getSnapshotPayload(
 	snapshotId: string,
 	bucket: R2Bucket,
 ): Promise<{ index: SnapshotIndex; payload: Uint8Array } | null> {
-	const snapshots = await listSnapshots(vaultId, bucket);
+	const { snapshots } = await listSnapshots(vaultId, bucket);
 	const index = snapshots.find((entry) => entry.snapshotId === snapshotId);
 	if (!index) return null;
 
@@ -335,8 +414,10 @@ export async function getSnapshotPayload(
  * Rules:
  *   - Always keep the latest snapshot.
  *   - Always keep pinned snapshots.
+ *   - Never automatically prune legacy snapshots without a reason field
+ *     (they may have been manual snapshots from before reason tracking).
  *   - Keep all snapshots from the last `keepDays` days.
- *   - Keep the newest snapshot per ISO week for `keepWeekly` weeks.
+ *   - Keep the newest snapshot per rough week for `keepWeekly` weeks.
  *   - Keep the newest snapshot per month for `keepMonthly` months.
  *   - Everything else is a prune candidate.
  */
@@ -357,6 +438,19 @@ export function selectRetention(
 		if (s.pinned) keepSet.add(s.snapshotId);
 	}
 
+	// Protect legacy snapshots: if no reason field, assume potentially manual.
+	// Only prune snapshots that we explicitly know are "daily" (automated).
+	for (const s of snapshots) {
+		if (!s.reason) {
+			// Legacy snapshot — no metadata about how it was created.
+			// Conservatively keep it. Users can prune via manual command.
+			keepSet.add(s.snapshotId);
+		} else if (s.reason !== "daily") {
+			// Explicit non-daily reason: keep (manual, pre-upgrade, etc.)
+			keepSet.add(s.snapshotId);
+		}
+	}
+
 	const nowMs = now.getTime();
 	const dayMs = 24 * 60 * 60 * 1000;
 
@@ -368,14 +462,14 @@ export function selectRetention(
 		}
 	}
 
-	// Keep newest per ISO week for keepWeekly weeks (beyond keepDays)
+	// Keep newest per rough week for keepWeekly weeks (beyond keepDays)
 	const weeklyCutoff = nowMs - (policy.keepDays + policy.keepWeekly * 7) * dayMs;
 	const seenWeeks = new Set<string>();
 	for (const s of snapshots) {
 		const ts = new Date(s.createdAt).getTime();
 		if (ts >= daysCutoff) continue; // already kept by daily rule
 		if (ts < weeklyCutoff) continue;
-		const week = isoWeekKey(new Date(s.createdAt));
+		const week = roughWeekKey(new Date(s.createdAt));
 		if (!seenWeeks.has(week)) {
 			seenWeeks.add(week);
 			keepSet.add(s.snapshotId);
@@ -410,53 +504,69 @@ export function selectRetention(
 
 /**
  * Delete pruned snapshot objects from R2.
- * Returns the number of snapshots successfully deleted.
+ * Returns the number of snapshots successfully deleted and per-failure details.
  */
 export async function pruneSnapshots(
 	vaultId: string,
 	toPrune: SnapshotIndex[],
 	bucket: R2Bucket,
-): Promise<{ deleted: number; failed: number }> {
+): Promise<{ deleted: number; failed: number; errors: string[] }> {
 	let deleted = 0;
 	let failed = 0;
+	const errors: string[] = [];
 
 	for (const s of toPrune) {
 		const prefix = snapshotPrefix(vaultId, s.day, s.snapshotId);
 		try {
 			await bucket.delete([`${prefix}/crdt.bin.gz`, `${prefix}/index.json`]);
 			deleted++;
-		} catch {
+		} catch (err) {
 			failed++;
+			errors.push(`${s.snapshotId}: ${err instanceof Error ? err.message : String(err)}`);
 		}
 	}
 
-	// Update latest-index if needed (shouldn't prune latest, but be safe)
-	return { deleted, failed };
+	return { deleted, failed, errors };
 }
 
 /**
  * Run retention: list snapshots, select retention, prune excess.
+ * Returns full diagnostic information about what happened.
  */
 export async function applyRetention(
 	vaultId: string,
 	bucket: R2Bucket,
 	policy: RetentionPolicy = DEFAULT_RETENTION,
-): Promise<{ kept: number; pruned: number; failed: number }> {
-	const all = await listSnapshots(vaultId, bucket);
+): Promise<{ kept: number; pruned: number; failed: number; errors: string[] }> {
+	const { snapshots: all } = await listSnapshots(vaultId, bucket);
 	const { keep, prune } = selectRetention(all, policy);
-	if (prune.length === 0) return { kept: keep.length, pruned: 0, failed: 0 };
+	if (prune.length === 0) return { kept: keep.length, pruned: 0, failed: 0, errors: [] };
 	const result = await pruneSnapshots(vaultId, prune, bucket);
-	return { kept: keep.length, pruned: result.deleted, failed: result.failed };
+	return { kept: keep.length, pruned: result.deleted, failed: result.failed, errors: result.errors };
 }
 
 // -------------------------------------------------------------------
 // Helpers
 // -------------------------------------------------------------------
 
-function isoWeekKey(date: Date): string {
-	// Approximate ISO week: year + week number
-	const jan1 = new Date(date.getFullYear(), 0, 1);
+/**
+ * Approximate week key for retention bucketing.
+ *
+ * NOTE: This is NOT a proper ISO 8601 week calculation. It uses a rough
+ * day-of-year / 7 computation. The approximation is acceptable for retention
+ * bucketing where exact week boundaries are not critical. Named "rough" to
+ * be honest about the approximation.
+ *
+ * Known edge cases:
+ *   - Dec 31 / Jan 1 boundary: may assign adjacent days to different years.
+ *   - Does not follow ISO 8601 "week starts on Monday" convention.
+ *
+ * For retention purposes, ±1 day error in bucket boundaries is acceptable.
+ */
+export function roughWeekKey(date: Date): string {
+	const year = date.getUTCFullYear();
+	const jan1 = new Date(Date.UTC(year, 0, 1));
 	const dayOfYear = Math.ceil((date.getTime() - jan1.getTime()) / (24 * 60 * 60 * 1000));
-	const weekNum = Math.ceil((dayOfYear + jan1.getDay()) / 7);
-	return `${date.getFullYear()}-W${String(weekNum).padStart(2, "0")}`;
+	const weekNum = Math.ceil((dayOfYear + jan1.getUTCDay()) / 7);
+	return `${year}-W${String(weekNum).padStart(2, "0")}`;
 }
