@@ -25,6 +25,45 @@ function buildWsUrl({ includeSchema, schemaVersion }) {
 	return url.toString();
 }
 
+async function safeDestroy(provider, ydoc) {
+	// Force terminate the WebSocket to skip the 30s close handshake timeout in "ws" library.
+	const ws = provider.ws;
+	if (ws && typeof ws.terminate === "function") {
+		ws.terminate();
+	}
+
+	// Ensure Awareness interval is cleared (using public API).
+	if (provider.awareness) {
+		provider.awareness.destroy();
+	}
+
+	const capturedDuringTeardown = new Set();
+	const originalSetTimeout = globalThis.setTimeout;
+	const originalGlobalSetTimeout = global.setTimeout;
+	const patchedSetTimeout = (fn, delay, ...args) => {
+		const handle = originalSetTimeout(fn, delay, ...args);
+		if (delay > 0) {
+			capturedDuringTeardown.add(handle);
+		}
+		return handle;
+	};
+	globalThis.setTimeout = patchedSetTimeout;
+	global.setTimeout = patchedSetTimeout;
+
+	provider.destroy();
+	if (ydoc) ydoc.destroy();
+
+	// Give a few ticks for any post-close logic (like reconnect timers)
+	await new Promise((r) => originalSetTimeout(r, 100));
+
+	globalThis.setTimeout = originalSetTimeout;
+	global.setTimeout = originalGlobalSetTimeout;
+
+	for (const h of capturedDuringTeardown) {
+		clearTimeout(h);
+	}
+}
+
 async function seedRoomSchema(schemaVersion) {
 	const ydoc = new Y.Doc();
 	const syncPrefix = `/vault/sync/${encodeURIComponent(ROOM_ID)}`;
@@ -83,8 +122,7 @@ async function seedRoomSchema(schemaVersion) {
 		});
 	});
 
-	provider.destroy();
-	ydoc.destroy();
+	await safeDestroy(provider, ydoc);
 }
 
 async function expectRejected(label, wsUrl) {
@@ -96,7 +134,8 @@ async function expectRejected(label, wsUrl) {
 		const timeout = setTimeout(() => {
 			if (settled) return;
 			settled = true;
-			ws.close();
+			if (typeof ws.terminate === "function") ws.terminate();
+			else ws.close();
 			rejectPromise(new Error(`${label}: timed out waiting for update_required`));
 		}, 5_000);
 
@@ -104,6 +143,8 @@ async function expectRejected(label, wsUrl) {
 			if (settled) return;
 			settled = true;
 			clearTimeout(timeout);
+			if (typeof ws.terminate === "function") ws.terminate();
+			else ws.close();
 			if (err) {
 				rejectPromise(err);
 				return;
@@ -186,28 +227,32 @@ async function expectAllowed(schemaVersion) {
 		});
 	});
 
-	provider.destroy();
-	ydoc.destroy();
+	await safeDestroy(provider, ydoc);
 }
 
 async function main() {
-	console.log(`Schema guard integration room: ${ROOM_ID}`);
-	await seedRoomSchema(2);
-	console.log("Seeded room with sys.schemaVersion=2");
+	try {
+		console.log(`Schema guard integration room: ${ROOM_ID}`);
+		await seedRoomSchema(2);
+		console.log("Seeded room with sys.schemaVersion=2");
 
-	await expectRejected("stale client schema", buildWsUrl({
-		includeSchema: true,
-		schemaVersion: 1,
-	}));
-	console.log("Rejected stale schemaVersion=1 client as expected");
+		await expectRejected("stale client schema", buildWsUrl({
+			includeSchema: true,
+			schemaVersion: 1,
+		}));
+		console.log("Rejected stale schemaVersion=1 client as expected");
 
-	await expectRejected("missing schema (legacy default)", buildWsUrl({
-		includeSchema: false,
-	}));
-	console.log("Rejected missing schema client (legacy default v1) as expected");
+		await expectRejected("missing schema (legacy default)", buildWsUrl({
+			includeSchema: false,
+		}));
+		console.log("Rejected missing schema client (legacy default v1) as expected");
 
-	await expectAllowed(2);
-	console.log("Accepted compatible schemaVersion=2 client");
+		await expectAllowed(2);
+		console.log("Accepted compatible schemaVersion=2 client");
+		process.exit(0);
+	} finally {
+		// Teardown handled by safeDestroy inside sub-calls
+	}
 }
 
 main().catch((err) => {

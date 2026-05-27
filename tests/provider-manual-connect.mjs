@@ -73,6 +73,45 @@ function isStateVectorGe(a, b) {
 	}
 }
 
+async function safeDestroy(provider, ydoc) {
+	// Force terminate the WebSocket to skip the 30s close handshake timeout in "ws" library.
+	const ws = provider.ws;
+	if (ws && typeof ws.terminate === "function") {
+		ws.terminate();
+	}
+
+	// Ensure Awareness interval is cleared (using public API).
+	if (provider.awareness) {
+		provider.awareness.destroy();
+	}
+
+	const capturedDuringTeardown = new Set();
+	const originalSetTimeout = globalThis.setTimeout;
+	const originalGlobalSetTimeout = global.setTimeout;
+	const patchedSetTimeout = (fn, delay, ...args) => {
+		const handle = originalSetTimeout(fn, delay, ...args);
+		if (delay > 0) {
+			capturedDuringTeardown.add(handle);
+		}
+		return handle;
+	};
+	globalThis.setTimeout = patchedSetTimeout;
+	global.setTimeout = patchedSetTimeout;
+
+	provider.destroy();
+	if (ydoc) ydoc.destroy();
+
+	// Give a few ticks for any post-close logic (like reconnect timers)
+	await new Promise((r) => originalSetTimeout(r, 100));
+
+	globalThis.setTimeout = originalSetTimeout;
+	global.setTimeout = originalGlobalSetTimeout;
+
+	for (const h of capturedDuringTeardown) {
+		clearTimeout(h);
+	}
+}
+
 async function withProvider(label, callback) {
 	const ydoc = new Y.Doc();
 	const provider = new YSyncProvider(HOST, ROOM_ID, ydoc, {
@@ -102,8 +141,7 @@ async function withProvider(label, callback) {
 	try {
 		await callback({ ydoc, provider, getStatusEvents: () => statusEvents, getSvEchoes: () => svEchoes.slice() });
 	} finally {
-		provider.destroy();
-		ydoc.destroy();
+		await safeDestroy(provider, ydoc);
 	}
 }
 
@@ -232,6 +270,7 @@ async function main() {
 		}
 		console.log("Manual reconnect synced existing state; fresh provider received baseline sv-echo");
 	});
+	process.exit(0);
 }
 
 main().catch((err) => {
