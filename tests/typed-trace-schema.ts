@@ -158,10 +158,11 @@ console.log("\n--- Test 3: source-grep static guard for recovery.skipped frontma
 		`recordFrontmatterIngestBlocked invoked exactly six times in controller (got ${helperInvocations.length})`,
 	);
 
-	// FLIGHT_TAXONOMY_VERSION is unchanged at 9 (no taxonomy bump).
+	// FLIGHT_TAXONOMY_VERSION is at 10 (bumped by editor-bound localOnly
+	// amplifier guard for recovery.amplification.quarantined).
 	assert(
-		flight.includes("export const FLIGHT_TAXONOMY_VERSION = 9"),
-		"FLIGHT_TAXONOMY_VERSION remains 9",
+		flight.includes("export const FLIGHT_TAXONOMY_VERSION = 10"),
+		"FLIGHT_TAXONOMY_VERSION at 10",
 	);
 }
 

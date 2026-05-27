@@ -408,15 +408,17 @@ function buildFixture(opts: {
 }
 
 // -------------------------------------------------------------------
-// Sanity: taxonomy is unchanged (Requirement 1, Gate 1)
+// Sanity: taxonomy at the version current at the time of this spec
 // -------------------------------------------------------------------
 
-console.log("\n--- Taxonomy: FLIGHT_TAXONOMY_VERSION unchanged ---");
+console.log("\n--- Taxonomy: FLIGHT_TAXONOMY_VERSION ---");
 {
+	// Bumped to 10 by the editor-bound localOnly amplifier guard spec
+	// (recovery.amplification.quarantined). This spec does not bump.
 	assertEq(
 		FLIGHT_TAXONOMY_VERSION,
-		9,
-		"FLIGHT_TAXONOMY_VERSION === 9 (no bump for this spec)",
+		10,
+		"FLIGHT_TAXONOMY_VERSION === 10 (no bump for this spec)",
 	);
 }
 
