@@ -145,9 +145,29 @@ Repo-validated bug / incident ledger as of 2026-05-27.
   - Pauses (idle-guard skip, crdt-current no-op, recovery-lock skip) reset
     the amplification history. Legitimate one-shot recoveries do not count
     toward future quarantines.
+  - **Reviewer follow-ups (2026-05-28):**
+    - Binding-health-conditional repair. The localOnly per-view repair
+      loop now calls `editorBindings.repair()` only when
+      `classifyBindingHealth` returns unhealthy (`cmMatches === false`,
+      `hasSyncFacet === false`, `yTextMatchesExpected === false`, or
+      `awarenessMatchesProvider === false`). Healthy bindings skip the
+      compartment reconfigure. Removes the per-cycle jitter that biased
+      the autosave-vs-y-sync race.
+    - Writer attribution on `disk.modify.observed`. New fields
+      `writerGuess` (`"yaos-write" | "external" | "unknown"`),
+      `suppressWindowActive`, `lastDiskWriteOkAtMs`,
+      `msSinceLastDiskWriteOk`. Future RCAs no longer have to infer
+      writer identity from absence of `disk.write.ok`.
+    - Duplicate `recovery.decision` recording fixed. The
+      `recordFlightPathEvent` helper in `main.ts` now routes
+      `recovery.decision` through `reserveAndRecordPath` only; the
+      earlier `recordPath` call is skipped for that kind.
+    - User-visible Notice on amplification quarantine. Throttled to
+      one per 60s; suppressed firings are counted in the next surfaced
+      notice.
 - Spec: `.kiro/specs/editor-bound-localonly-amplifier-guard/requirements.md`
 - Regression: `tests/controller-recovery-orchestration-amplifier.ts`
-  (4 deterministic Node scenarios in `npm run test:regressions`).
+  (5 deterministic Node scenarios, 48 assertions in `npm run test:regressions`).
 - iPad proof: still pending. Desktop coverage proves the predicate, the
   flight kind, and the timing. Real-device validation required before
   closing this variant fully for mobile.

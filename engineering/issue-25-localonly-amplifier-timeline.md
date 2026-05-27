@@ -42,7 +42,26 @@ controller's reconcile latency of ~360ms.
 
 > After `recovery.apply.done`, what event makes disk diverge again?
 
-**The next user keystroke being autosaved by Obsidian.**
+**Inferred answer:** the next user keystroke being autosaved by Obsidian.
+This is the strongest hypothesis given the evidence; the writer was not
+positively identified by the trace at the time this document was written.
+
+What the trace at that time DID prove:
+- Disk size grew by +5 chars per cycle, in lockstep with witness divergence.
+- No `disk.write.ok` events were emitted on this path during the loop
+  window. YAOS's own `flushWrite` records a `disk.write.ok`, so the
+  absence of that event means YAOS was not the writer.
+- The growth cadence (~2.36s) matches the witness `stableAfterMs` of
+  2000ms plus the controller's reconcile latency, which also matches
+  human typing burst cadence with Obsidian's autosave debounce.
+
+What the trace at that time did NOT prove:
+- The writer identity is not labeled in `disk.modify.observed` events
+  prior to taxonomy version 10. After the editor-bound localOnly
+  amplifier guard spec, those events carry `writerGuess`,
+  `suppressWindowActive`, `lastDiskWriteOkAtMs`, and
+  `msSinceLastDiskWriteOk` so future RCAs can confirm the inference
+  without inferring from absence-of-write-ok.
 
 After every successful recovery:
 - CRDT == disk == editor at the instant of `recovery.apply.done`
