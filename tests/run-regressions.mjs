@@ -52,6 +52,7 @@ const suites = [
 	[JITI, "tests/trace-event-behavior.ts"],
 	[JITI, "tests/reconciliation-safety-brake.ts"],
 	[JITI, "tests/blob-download-conflicts.ts"],
+	[JITI, "tests/markdown-remote-delete-trash-preference.ts"],
 	[JITI, "tests/closed-file-conflict.ts"],
 	[JITI, "tests/preserved-unresolved-registry.ts"],
 	[NODE, "tests/markdown-ingest-regressions.mjs"],
