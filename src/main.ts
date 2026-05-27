@@ -25,6 +25,7 @@ import {
 import {
 	FrontmatterGuardCoordinator,
 } from "./sync/frontmatterGuardCoordinator";
+import { createSocketTicketCache, isTicketEndpointUnsupported } from "./sync/socketTicket";
 import {
 	type DiskIndex,
 	moveIndexEntries,
@@ -88,6 +89,13 @@ import { isLocalOrigin } from "./sync/origins";
 type PersistedPluginState = Partial<VaultSyncSettings> & {
 	_diskIndex?: DiskIndex;
 	_blobHashCache?: BlobHashCache;
+	/**
+	 * Unix ms timestamp of the last successful saveDiskIndex() call.
+	 * Used by decideClosedFileConflict to detect "disk file was edited
+	 * while YAOS was inactive" when baselineHash is missing.
+	 * See: src/sync/closedFileConflict.ts ClosedFileConflictInput.lastSaveDiskIndexAt
+	 */
+	_lastSaveDiskIndexAt?: number;
 	_blobQueue?: BlobQueueSnapshot;
 	_serverCapabilitiesCache?: PersistedServerCapabilitiesCache;
 	_updateManifestCache?: PersistedUpdateManifestCache;
@@ -129,6 +137,8 @@ export default class VaultCrdtSyncPlugin extends Plugin {
 
 	/** Persisted disk index: {path -> {mtime, size}}. */
 	private diskIndex: DiskIndex = {};
+	/** Unix ms timestamp of the last saveDiskIndex() that completed successfully. */
+	private lastSaveDiskIndexAt = 0;
 
 	/** Persisted blob hash cache: {path -> {mtime, size, hash}}. */
 	private blobHashCache: BlobHashCache = {};
@@ -182,6 +192,7 @@ export default class VaultCrdtSyncPlugin extends Plugin {
 			},
 			saveDiskIndex: () => this.saveDiskIndex(),
 			refreshStatusBar: () => this.refreshStatusBar(),
+			getLastSaveDiskIndexAt: () => this.lastSaveDiskIndexAt,
 			trace: (source, msg, details) => this.trace(source, msg, details),
 			scheduleTraceStateSnapshot: (reason) => this.scheduleTraceStateSnapshot(reason),
 			log: (message) => this.log(message),
@@ -440,6 +451,54 @@ export default class VaultCrdtSyncPlugin extends Plugin {
 				trace: (source, msg, details) => this.trace(source, msg, details),
 				onFlightEvent: (event) => this.recordFlightEvent(event as import("./debug/flightEvents").FlightEventInput),
 				onFlightPathEvent: (event) => this.recordFlightPathEvent(event),
+				getSocketTicket: (() => {
+					// Each VaultSync instance gets its own ticket cache.  The cache
+					// is discarded when VaultSync is torn down and recreated.
+					const ticketCache = createSocketTicketCache();
+					const self = this;
+					return async (): Promise<string | null> => {
+						const socketTicketAuth =
+							self.capabilityUpdateService?.capabilities?.socketTicketAuth;
+
+						// Known old server that explicitly signals no ticket support.
+						if (socketTicketAuth === false) return null;
+
+						// Already confirmed this server does not have the ticket
+						// endpoint — skip the network probe.
+						if (ticketCache.isUnsupported()) return null;
+
+						// socketTicketAuth === true  → confirmed support.
+						// socketTicketAuth === undefined → capability not yet fetched
+						//   (first run, empty cache, slow background poll).
+						// Both: try the ticket endpoint.
+						//
+						// On a clean "endpoint not found" signal (404/405/501) from an
+						// unknown-capability server, mark the cache unsupported and fall
+						// back to ?token= for this connection.  Any other failure (auth,
+						// network, 5xx) must propagate — never silently downgrade to the
+						// long-lived token.
+						try {
+							return await ticketCache.get(
+								self.settings.host,
+								self.settings.token,
+								self.settings.vaultId,
+							);
+						} catch (err) {
+							if (
+								socketTicketAuth === undefined
+								&& isTicketEndpointUnsupported(err)
+							) {
+								// Old server confirmed: stop probing on future reconnects.
+								ticketCache.markUnsupported();
+								self.log("socket ticket endpoint not found; using legacy ?token= for this connection");
+								return null;
+							}
+							// Real failure — propagate.
+							self.log(`socket ticket fetch failed: ${String(err)}`);
+							throw err;
+						}
+					};
+				})(),
 			});
 
 			// 2. EditorBindingManager
@@ -1613,6 +1672,10 @@ export default class VaultCrdtSyncPlugin extends Plugin {
 		if (data && typeof data._diskIndex === "object" && data._diskIndex !== null) {
 			this.diskIndex = data._diskIndex;
 		}
+		// Load lastSaveDiskIndexAt for missing-baseline conflict tie-breaking
+		if (data && typeof data._lastSaveDiskIndexAt === "number" && data._lastSaveDiskIndexAt > 0) {
+			this.lastSaveDiskIndexAt = data._lastSaveDiskIndexAt;
+		}
 		// Load blob hash cache
 		if (data && typeof data._blobHashCache === "object" && data._blobHashCache !== null) {
 			this.blobHashCache = data._blobHashCache;
@@ -1815,6 +1878,7 @@ export default class VaultCrdtSyncPlugin extends Plugin {
 		}
 
 	private async saveDiskIndex(): Promise<void> {
+		this.lastSaveDiskIndexAt = Date.now();
 		await this.persistPluginState();
 	}
 
@@ -1842,6 +1906,7 @@ export default class VaultCrdtSyncPlugin extends Plugin {
 			...this.settingsStore.withSettings(this.persistedState, this.settings),
 			_diskIndex: this.diskIndex,
 			_blobHashCache: this.blobHashCache,
+			...(this.lastSaveDiskIndexAt > 0 && { _lastSaveDiskIndexAt: this.lastSaveDiskIndexAt }),
 		};
 		const cachedCapabilities = this.capabilityUpdateService?.getPersistedServerCapabilitiesCache();
 		if (cachedCapabilities) {
