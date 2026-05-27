@@ -439,6 +439,7 @@ export default class VaultCrdtSyncPlugin extends Plugin {
 				this.vaultSync,
 				this.settings.debug,
 				(source, msg, details) => this.trace(source, msg, details),
+				(event) => this.recordFlightPathEvent(event),
 			);
 
 			// 3. Global CM6 extension

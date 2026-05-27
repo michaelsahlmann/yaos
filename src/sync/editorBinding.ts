@@ -7,6 +7,7 @@ import type { VaultSync } from "./vaultSync";
 import { applyDiffToYText } from "./diff";
 import type { TraceRecord } from "../debug/trace";
 import { ORIGIN_EDITOR_HEALTH_HEAL } from "./origins";
+import { FLIGHT_KIND, type FlightPathEventInput } from "../debug/flightEvents";
 
 /**
  * Manages per-editor CM6 bindings via yCollab.
@@ -112,6 +113,7 @@ export class EditorBindingManager {
 		private vaultSync: VaultSync,
 		debug: boolean,
 		private trace?: TraceRecord,
+		private recordFlightPathEvent?: (event: FlightPathEventInput) => void,
 	) {
 		this.debug = debug;
 	}
@@ -310,13 +312,36 @@ export class EditorBindingManager {
 
 		const currentContent = view.editor.getValue();
 		const crdtContent = target.ytext.toJSON();
-		if (crdtContent !== currentContent) {
+		const diffApplied = crdtContent !== currentContent;
+		if (diffApplied) {
 			this.log(
 				`heal: applying local editor content to "${file.path}" ` +
 				`(${crdtContent.length} -> ${currentContent.length} chars, reason=${reason})`,
 			);
 			applyDiffToYText(target.ytext, crdtContent, currentContent, ORIGIN_EDITOR_HEALTH_HEAL);
 		}
+
+		// Emit editor.heal.applied unconditionally on heal() entry so that
+		// "no editor.heal.applied event" means "heal() was not invoked",
+		// not "heal() was invoked but happened to be a no-op". The
+		// diffApplied flag distinguishes the two cases. See spec:
+		// .kiro/specs/controller-recovery-orchestration/requirements.md R5.
+		this.recordFlightPathEvent?.({
+			priority: "important",
+			kind: FLIGHT_KIND.editorHealApplied,
+			severity: "info",
+			scope: "file",
+			source: "editorBinding",
+			layer: "editor",
+			path: file.path,
+			data: {
+				reason,
+				crdtLength: crdtContent.length,
+				editorLength: currentContent.length,
+				crdtMatchesEditorBefore: !diffApplied,
+				diffApplied,
+			},
+		});
 
 		return this.repair(view, deviceName, reason);
 	}
@@ -1059,6 +1084,26 @@ export class EditorBindingManager {
 			settleWindowMs,
 			rapidSwitch,
 		});
+
+		// Emit editor.repair.applied only for successful repair-action applications.
+		// See spec: .kiro/specs/controller-recovery-orchestration/requirements.md R4.
+		if (action === "repair") {
+			this.recordFlightPathEvent?.({
+				priority: "important",
+				kind: FLIGHT_KIND.editorRepairApplied,
+				severity: "info",
+				scope: "file",
+				source: "editorBinding",
+				layer: "editor",
+				path: filePath,
+				data: {
+					leafId,
+					cmId,
+					reason: reason ?? null,
+					rapidSwitch,
+				},
+			});
+		}
 
 		const result = action === "repair" ? "repaired" : "bound";
 		const reasonSuffix = reason ? `, reason=${reason}` : "";

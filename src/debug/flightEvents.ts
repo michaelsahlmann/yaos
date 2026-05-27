@@ -1,5 +1,5 @@
 export const FLIGHT_EVENT_SCHEMA_VERSION = 1;
-export const FLIGHT_TAXONOMY_VERSION = 8; // bumped: Phase 3 — qa.scenario.step FlightKind, scenarioStepIndex/scenarioStepLabel/scenarioRunId/scenarioId on device.witness.*
+export const FLIGHT_TAXONOMY_VERSION = 9; // bumped: controller recovery orchestration — recovery.skipped, editor.repair.applied, editor.heal.applied
 
 export type FlightSeverity = "debug" | "info" | "warn" | "error";
 export type FlightScope =
@@ -111,6 +111,21 @@ export const FLIGHT_KIND = {
 	recoveryPostconditionFailed: "recovery.postcondition.failed",
 	recoveryLoopDetected: "recovery.loop.detected",
 	recoveryQuarantined: "recovery.quarantined",
+	/**
+	 * Emitted when the controller short-circuits a recovery pass without
+	 * entering any recovery branch. `data.reason` is constrained at the
+	 * type level by `RecoverySkippedReason`. When `reason` is
+	 * `"frontmatter-ingest-blocked"`, `data` matches the typed shape
+	 * `RecoverySkippedFrontmatterData` (carries `wasBound` plus a closed-
+	 * enum `branch` of type `FrontmatterIngestBlockBranch`); the only
+	 * production constructor of that payload is
+	 * `ReconciliationController.recordFrontmatterIngestBlocked`.
+	 *
+	 * See specs:
+	 *   .kiro/specs/controller-recovery-orchestration/requirements.md R2.
+	 *   .kiro/specs/frontmatter-guard-orchestration/requirements.md R2.
+	 */
+	recoverySkipped: "recovery.skipped",
 
 	// Tombstone / remote delete lifecycle
 	/** Emitted by diskMirror: CRDT remote delete observed, deciding action. */
@@ -125,9 +140,71 @@ export const FLIGHT_KIND = {
 	deviceWitnessDiverged: "device.witness.diverged",
 	// QA scenario step (Layer 4 Phase 3 — cross-device ordering for manual runs)
 	qaScenarioStep: "qa.scenario.step",
+	// Editor binding orchestration (controller recovery orchestration spec)
+	editorRepairApplied: "editor.repair.applied",
+	editorHealApplied: "editor.heal.applied",
 } as const;
 
 export type FlightKind = typeof FLIGHT_KIND[keyof typeof FLIGHT_KIND];
+
+// -----------------------------------------------------------------------
+// recovery.skipped — typed reason discriminator and frontmatter payload
+// -----------------------------------------------------------------------
+
+/**
+ * Closed-enum reason discriminator for `recovery.skipped` events. The
+ * controller picks exactly one of these per emission. New reasons require
+ * extending this union AND updating the spec.
+ *
+ * - "crdt-current-no-op"          CRDT and disk already agree.
+ * - "recovery-lock-active"        bound recovery lock is still active.
+ * - "recent-editor-activity"      crdtOnly branch idle-grace bail.
+ * - "frontmatter-ingest-blocked"  shouldBlockFrontmatterIngest returned
+ *                                 true at one of the six block sites.
+ *                                 See FrontmatterIngestBlockBranch.
+ *
+ * See specs:
+ *   .kiro/specs/controller-recovery-orchestration/requirements.md R2.
+ *   .kiro/specs/frontmatter-guard-orchestration/requirements.md R2.
+ */
+export type RecoverySkippedReason =
+	| "crdt-current-no-op"
+	| "recovery-lock-active"
+	| "recent-editor-activity"
+	| "frontmatter-ingest-blocked";
+
+/**
+ * Closed string-literal union covering every site at which
+ * ReconciliationController calls shouldBlockFrontmatterIngest. Used as the
+ * `branch` discriminator on `recovery.skipped` events with
+ * `data.reason === "frontmatter-ingest-blocked"`. New emission sites
+ * require extending this union AND updating the spec.
+ *
+ * See spec: .kiro/specs/frontmatter-guard-orchestration/requirements.md R2.
+ */
+export type FrontmatterIngestBlockBranch =
+	| "disk-to-crdt-existing"
+	| "disk-to-crdt-seed"
+	| "bound-file-local-only-divergence"
+	| "bound-file-local-only-seed"
+	| "bound-file-open-idle-disk-recovery"
+	| "bound-file-open-idle-seed";
+
+/**
+ * Typed payload shape for the `frontmatter-ingest-blocked` variant of
+ * `recovery.skipped.data`. The helper
+ * `ReconciliationController.recordFrontmatterIngestBlocked` is the only
+ * production constructor of this payload.
+ *
+ * Required fields: `reason`, `wasBound`, `branch`. The `data` carrier on
+ * `FlightEventBase` is `Record<string, unknown>`, so this type is the
+ * compile-time guarantee that the helper builds the right shape.
+ */
+export type RecoverySkippedFrontmatterData = {
+	reason: "frontmatter-ingest-blocked";
+	wasBound: boolean;
+	branch: FrontmatterIngestBlockBranch;
+};
 
 // -----------------------------------------------------------------------
 // Envelope types
