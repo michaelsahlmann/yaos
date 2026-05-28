@@ -2,6 +2,7 @@ import { getServerByName } from "partyserver";
 import { getSocketAuthToken, isAuthorized } from "./auth";
 import { json, withCors } from "./http";
 import { fetchVaultSchemaVersion, recordVaultTrace } from "./trace";
+import { verifyTicket } from "./ticket";
 import type { AuthState, Env, FatalAuthCode } from "./types";
 
 const LEGACY_CLIENT_SCHEMA_VERSION = 1;
@@ -95,6 +96,62 @@ function logSocketRejection(
 	);
 }
 
+// ---------------------------------------------------------------------------
+// Pure socket auth decision
+// ---------------------------------------------------------------------------
+
+export type SocketAuthResult =
+	| { ok: true; method: "ticket" | "legacy-token" }
+	| { ok: false; reason: "unclaimed" | "server_misconfigured" | "unauthorized" };
+
+/**
+ * Decide whether a WebSocket connection request is authenticated.
+ *
+ * Pure function: takes no Request object, touches no Durable Objects, emits
+ * no telemetry.  The route calls this then acts on the result.
+ *
+ * Auth rules:
+ *   1. Ticket present → verify exclusively.  A bad ticket rejects hard and
+ *      does NOT fall back to the token path.
+ *   2. No ticket, legacy NOT disabled → verify long-lived token.
+ *   3. No ticket, legacy IS disabled → reject unauthorised.  The server
+ *      operator has opted out of the migration window.
+ */
+export async function authenticateSocketRequest(
+	ticket: string | null,
+	token: string | null,
+	authState: AuthState,
+	vaultId: string,
+	disableLegacyToken: boolean,
+): Promise<SocketAuthResult> {
+	if (!authState.claimed) {
+		return { ok: false, reason: "unclaimed" };
+	}
+	if (authState.mode === "env" && !authState.envToken) {
+		return { ok: false, reason: "server_misconfigured" };
+	}
+
+	if (ticket !== null) {
+		const ticketValid = await verifyTicket(ticket, authState, vaultId);
+		return ticketValid
+			? { ok: true, method: "ticket" }
+			: { ok: false, reason: "unauthorized" };
+	}
+
+	if (disableLegacyToken) {
+		return { ok: false, reason: "unauthorized" };
+	}
+
+	const tokenValid = await isAuthorized(authState, token);
+	return tokenValid
+		? { ok: true, method: "legacy-token" }
+		: { ok: false, reason: "unauthorized" };
+}
+
+// ---------------------------------------------------------------------------
+// Route handler
+// ---------------------------------------------------------------------------
+
 export async function handleSyncSocketRoute(
 	req: Request,
 	env: Env,
@@ -103,19 +160,28 @@ export async function handleSyncSocketRoute(
 ): Promise<Response> {
 	const url = new URL(req.url);
 	const token = getSocketAuthToken(req);
+	const ticket = url.searchParams.get("ticket");
 	const clientSchema = parseClientSchemaVersion(url);
-	if (!authState.claimed) {
-		logSocketRejection(vaultId, "unclaimed");
-		return returnSocketResponse(req, rejectSocket(req, "unclaimed"));
+	const disableLegacyToken = !!env.YAOS_DISABLE_LEGACY_WS_TOKEN;
+
+	const authResult = await authenticateSocketRequest(
+		ticket, token, authState, vaultId, disableLegacyToken,
+	);
+
+	if (!authResult.ok) {
+		logSocketRejection(vaultId, authResult.reason);
+		return returnSocketResponse(req, rejectSocket(req, authResult.reason));
 	}
-	if (authState.mode === "env" && !authState.envToken) {
-		logSocketRejection(vaultId, "server_misconfigured");
-		return returnSocketResponse(req, rejectSocket(req, "server_misconfigured"));
+
+	// Warn on every legacy-token connection so operators can monitor adoption
+	// before enabling YAOS_DISABLE_LEGACY_WS_TOKEN.
+	if (authResult.method === "legacy-token") {
+		console.warn(
+			`[yaos-sync:worker] legacy ?token= WebSocket auth for vault ${vaultId.slice(0, 8)} — ` +
+			`upgrade client to use short-lived tickets, or set YAOS_DISABLE_LEGACY_WS_TOKEN to enforce`,
+		);
 	}
-	if (!(await isAuthorized(authState, token))) {
-		logSocketRejection(vaultId, "unauthorized");
-		return returnSocketResponse(req, rejectSocket(req, "unauthorized"));
-	}
+
 	if (!clientSchema) {
 		await recordVaultTrace(env, vaultId, "ws-rejected", {
 			reason: "update_required",
@@ -151,8 +217,10 @@ export async function handleSyncSocketRoute(
 		clientSchemaVersion: clientSchema.version,
 		clientSchemaSource: clientSchema.source,
 		roomSchemaVersion,
+		authMethod: authResult.method,
 	});
 
 	const stub = await getServerByName(env.YAOS_SYNC, vaultId);
 	return await stub.fetch(req);
 }
+

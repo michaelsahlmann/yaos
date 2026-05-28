@@ -17,6 +17,7 @@ import { handleBlobRoute } from "./routes/blobs";
 import { corsPreflight, html, json, withCors } from "./routes/http";
 import { handleSnapshotRoute } from "./routes/snapshots";
 import { handleSyncSocketRoute, parseSyncPath } from "./routes/syncSocket";
+import { handleTicketRoute } from "./routes/ticket";
 import { fetchVaultDebug, fetchVaultDocument, recordVaultTrace } from "./routes/trace";
 import type { AuthState, Env } from "./routes/types";
 
@@ -157,6 +158,10 @@ const worker = {
 
 		if (resource === "debug" && req.method === "GET" && rest[0] === "recent") {
 			return withCors(await fetchVaultDebug(env, vaultRoute.vaultId));
+		}
+
+		if (resource === "auth" && rest[0] === "ticket" && req.method === "POST") {
+			return withCors(await handleTicketRoute(req, authState, vaultRoute.vaultId, json, env));
 		}
 
 		if (resource === "blobs") {

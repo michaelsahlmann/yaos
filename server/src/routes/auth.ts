@@ -173,6 +173,7 @@ export function getCapabilities(
 	attachments: boolean;
 	snapshots: boolean;
 	maxBlobUploadBytes: number;
+	socketTicketAuth: boolean;
 	serverVersion: string;
 	minPluginVersion: string | null;
 	recommendedPluginVersion: string | null;
@@ -190,6 +191,7 @@ export function getCapabilities(
 		attachments: bucketEnabled,
 		snapshots: bucketEnabled,
 		maxBlobUploadBytes: MAX_BLOB_UPLOAD_BYTES,
+		socketTicketAuth: true,
 		serverVersion: SERVER_VERSION,
 		minPluginVersion: SERVER_MIN_PLUGIN_VERSION,
 		recommendedPluginVersion: SERVER_RECOMMENDED_PLUGIN_VERSION,

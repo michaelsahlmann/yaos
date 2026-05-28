@@ -6,6 +6,8 @@ export interface ServerCapabilities {
 	attachments: boolean;
 	snapshots: boolean;
 	maxBlobUploadBytes?: number;
+	/** Server supports short-lived WebSocket connection tickets (Release N+). */
+	socketTicketAuth?: boolean;
 	serverVersion: string;
 	minPluginVersion: string | null;
 	recommendedPluginVersion: string | null;
