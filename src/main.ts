@@ -18,6 +18,8 @@ import { isMarkdownSyncable, isBlobSyncable } from "./types";
 import { admitMarkdownPath } from "./sync/policy/pathAdmissionPolicy";
 import { decideRenameAdmission, planRenameAction, planCategoryRenameAction } from "./sync/policy/renameAdmissionPolicy";
 import { classifySyncPath } from "./paths/pathCategory";
+import type { TraceSink } from "./observability/traceSink";
+import { FlightTraceSink } from "./debug/flightTraceSink";
 import {
 	type FrontmatterValidationResult,
 } from "./sync/frontmatterGuard";
@@ -129,6 +131,8 @@ export default class VaultCrdtSyncPlugin extends Plugin {
 	private setupLinkController: SetupLinkController | null = null;
 	private traceRuntime: TraceRuntimeController | null = null;
 	private flightTrace: FlightTraceController | null = null;
+	/** Domain-level trace sink. Adapts to flight recorder. */
+	private traceSink: TraceSink = new FlightTraceSink((event) => this.recordFlightPathEvent(event));
 	private deviceWitnessTracker: import("./diagnostics/deviceWitnessTracker").DeviceWitnessTracker | null = null;
 	/** SHA-256 hash of the active qaTraceSecret for cross-device identity verification. */
 	private _qaTraceSecretHash: string | null = null;
@@ -742,14 +746,10 @@ export default class VaultCrdtSyncPlugin extends Plugin {
 							throw new Error(msg);
 						}
 						this.log(`${msg} — tombstoning as fallback`);
-						this.recordFlightPathEvent({
-							priority: "critical",
-							kind: FLIGHT_KIND.renameAdmissionInvariantFailed,
-							severity: "error",
+						this.traceSink.recordPath({
+							kind: "rename.admission.invariant-failed",
 							scope: "file",
-							source: "vaultEvents",
-							layer: "policy",
-							opId: undefined,
+							severity: "error",
 							path: newPath,
 							data: { bug: "excluded-destination-reached-applyRenameBatch" },
 						});
@@ -980,29 +980,23 @@ export default class VaultCrdtSyncPlugin extends Plugin {
 
 				const renameOpId = this.newOpId();
 
-				// Emit trace events for lineage (both sides).
+				// Emit trace events for lineage via TraceSink (both sides).
 				if (oldCategory.kind === "markdown" || newCategory.kind === "markdown") {
-					this.recordFlightPathEvent({
-						priority: "important",
-						kind: FLIGHT_KIND.diskRenameObserved,
-						severity: "info",
+					this.traceSink.recordPath({
+						kind: "rename.observed",
 						scope: "file",
-						source: "vaultEvents",
-						layer: "disk",
+						severity: "info",
 						opId: renameOpId,
 						path: oldPath,
-						data: { renameRole: "source", oldCategory: oldCategory.kind },
+						data: { renameRole: "source", category: oldCategory.kind, opId: renameOpId },
 					});
-					this.recordFlightPathEvent({
-						priority: "important",
-						kind: FLIGHT_KIND.diskRenameObserved,
-						severity: "info",
+					this.traceSink.recordPath({
+						kind: "rename.observed",
 						scope: "file",
-						source: "vaultEvents",
-						layer: "disk",
+						severity: "info",
 						opId: renameOpId,
 						path: file.path,
-						data: { renameRole: "target", newCategory: newCategory.kind },
+						data: { renameRole: "target", category: newCategory.kind, opId: renameOpId },
 					});
 				}
 

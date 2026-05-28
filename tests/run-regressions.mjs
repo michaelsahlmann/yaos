@@ -134,6 +134,8 @@ const suites = [
 	[JITI, "tests/canonical-path.ts"],
 	[JITI, "tests/path-collision.ts"],
 	[JITI, "tests/path-category.ts"],
+	// Autophagy: TraceSink dependency inversion
+	[JITI, "tests/trace-sink.ts"],
 ];
 
 let totalPassed = 0;
