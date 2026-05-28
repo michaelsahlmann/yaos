@@ -16,7 +16,8 @@ import {
 } from "./sync/serverCapabilities";
 import { isMarkdownSyncable, isBlobSyncable } from "./types";
 import { admitMarkdownPath } from "./sync/policy/pathAdmissionPolicy";
-import { decideRenameAdmission, planRenameAction } from "./sync/policy/renameAdmissionPolicy";
+import { decideRenameAdmission, planRenameAction, planCategoryRenameAction } from "./sync/policy/renameAdmissionPolicy";
+import { classifySyncPath } from "./paths/pathCategory";
 import {
 	type FrontmatterValidationResult,
 } from "./sync/frontmatterGuard";
@@ -969,19 +970,18 @@ export default class VaultCrdtSyncPlugin extends Plugin {
 				if (!this.reconciliationController.isReconciled) return;
 				if (!(file instanceof TFile)) return;
 
-				const isOldBlob = this.isBlobPathSyncable(oldPath);
-				const isNewBlob = this.isBlobPathSyncable(file.path);
-				const isOldMd = this.isMarkdownPathSyncable(oldPath);
-				const isNewMd = this.isMarkdownPathSyncable(file.path);
+				// Classify both paths using canonical path identity.
+				const configDir = this.getRuntimeConfig().vaultConfigDir;
+				const oldCategory = classifySyncPath({ path: oldPath, excludePatterns: this.excludePatterns, configDir });
+				const newCategory = classifySyncPath({ path: file.path, excludePatterns: this.excludePatterns, configDir });
 
-				// Skip entirely if neither path is syncable in either dimension.
-				if (!isOldMd && !isNewMd && !isOldBlob && !isNewBlob) return;
+				// Skip entirely if both are excluded.
+				if (oldCategory.kind === "excluded" && newCategory.kind === "excluded") return;
 
 				const renameOpId = this.newOpId();
 
-				// --- Markdown admission ---
-				if (isOldMd || isNewMd) {
-					// Emit trace events for the rename (both sides, for lineage).
+				// Emit trace events for lineage (both sides).
+				if (oldCategory.kind === "markdown" || newCategory.kind === "markdown") {
 					this.recordFlightPathEvent({
 						priority: "important",
 						kind: FLIGHT_KIND.diskRenameObserved,
@@ -991,7 +991,7 @@ export default class VaultCrdtSyncPlugin extends Plugin {
 						layer: "disk",
 						opId: renameOpId,
 						path: oldPath,
-						data: { renameRole: "source", wasMarkdownSyncable: isOldMd },
+						data: { renameRole: "source", oldCategory: oldCategory.kind },
 					});
 					this.recordFlightPathEvent({
 						priority: "important",
@@ -1002,49 +1002,60 @@ export default class VaultCrdtSyncPlugin extends Plugin {
 						layer: "disk",
 						opId: renameOpId,
 						path: file.path,
-						data: { renameRole: "target", isBlobSyncable: isNewBlob },
+						data: { renameRole: "target", newCategory: newCategory.kind },
 					});
-
-					// Decide admission before any CRDT mutation.
-					const oldAdmission = admitMarkdownPath(oldPath, this.excludePatterns, this.getRuntimeConfig().vaultConfigDir);
-					const newAdmission = admitMarkdownPath(file.path, this.excludePatterns, this.getRuntimeConfig().vaultConfigDir);
-					const decision = decideRenameAdmission({ oldPath, newPath: file.path, oldAdmission, newAdmission });
-					const action = planRenameAction(decision);
-
-					// Execute the planned action.
-					switch (action.kind) {
-						case "queue-rename":
-							this.vaultSync?.queueRename(action.oldPath, action.newPath);
-							this.log(`Rename queued (syncable→syncable): "${oldPath}" -> "${file.path}"`);
-							break;
-
-						case "tombstone-old":
-							for (const p of action.dropDirty) this.reconciliationController.dropDirtyPath(p);
-							this.vaultSync?.handleDelete(action.oldPath, this.settings.deviceName, renameOpId);
-							this.log(`Rename admission: tombstoning old path (destination excluded): "${oldPath}" -> "${file.path}"`);
-							break;
-
-						case "admit-new":
-							for (const p of action.dropDirty) this.reconciliationController.dropDirtyPath(p);
-							this.reconciliationController.markMarkdownDirty(file, "create", renameOpId);
-							this.log(`Rename admission: admitting new path (source excluded): "${oldPath}" -> "${file.path}"`);
-							break;
-
-						case "ignore":
-							this.log(`Rename admission: ignoring (excluded→excluded): "${oldPath}" -> "${file.path}"`);
-							break;
-					}
 				}
 
-				// --- Blob admission ---
-				// Blob renames still use the batch path. Only queue if at least one
-				// side is blob-syncable AND this is NOT a markdown path (markdown
-				// paths are never blob-syncable by definition in isBlobSyncable,
-				// but guard explicitly to prevent category confusion).
-				const isBlobOnlyRename = (isOldBlob || isNewBlob) && !isOldMd && !isNewMd;
-				if (isBlobOnlyRename) {
-					this.vaultSync?.queueRename(oldPath, file.path);
-					this.log(`Rename queued (blob): "${oldPath}" -> "${file.path}"`);
+				// Plan the action using the category-aware planner.
+				const action = planCategoryRenameAction({ oldCategory, newCategory });
+
+				// Execute the planned action.
+				// All paths in actions are displayPath (original runtime paths).
+				switch (action.kind) {
+					case "queue-markdown-rename":
+						this.vaultSync?.queueRename(action.oldPath, action.newPath);
+						this.log(`Rename queued (markdown): "${oldPath}" -> "${file.path}"`);
+						break;
+
+					case "queue-blob-rename":
+						this.vaultSync?.queueRename(action.oldPath, action.newPath);
+						this.log(`Rename queued (blob): "${oldPath}" -> "${file.path}"`);
+						break;
+
+					case "tombstone-markdown":
+						for (const p of action.dropDirty) this.reconciliationController.dropDirtyPath(p);
+						this.vaultSync?.handleDelete(action.oldPath, this.settings.deviceName, renameOpId);
+						this.log(`Rename admission: tombstoning markdown "${oldPath}"`);
+						break;
+
+					case "admit-markdown":
+						for (const p of action.dropDirty) this.reconciliationController.dropDirtyPath(p);
+						this.reconciliationController.markMarkdownDirty(file, "create", renameOpId);
+						this.log(`Rename admission: admitting markdown "${file.path}"`);
+						break;
+
+					case "admit-blob-via-event":
+						// Blob admission: Obsidian will fire a create event for the new
+						// path, handled by blobSync.handleFileChange. No explicit action.
+						for (const p of action.dropDirty) this.reconciliationController.dropDirtyPath(p);
+						this.log(`Rename admission: blob "${file.path}" will be admitted via create event`);
+						break;
+
+					case "defer-blob-to-events":
+						// Blob leaves sync scope. Obsidian delete event for old path
+						// will be handled by blobSync. Just clean dirty state.
+						for (const p of action.dropDirty) this.reconciliationController.dropDirtyPath(p);
+						this.log(`Rename admission: blob "${oldPath}" leaving scope, deferred to events`);
+						break;
+
+					case "same-identity":
+						// NFC/NFD or separator variant rename. Same sync identity.
+						// No CRDT mutation needed — not a real rename from sync perspective.
+						this.log(`Rename admission: same identity (canonical equivalent): "${oldPath}" -> "${file.path}"`);
+						break;
+
+					case "ignore":
+						break;
 				}
 			}),
 		);

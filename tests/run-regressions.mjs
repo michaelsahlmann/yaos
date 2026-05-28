@@ -130,6 +130,10 @@ const suites = [
 	[JITI, "tests/map-with-concurrency.ts"],
 	[JITI, "tests/rename-admission-policy.ts"],
 	[JITI, "tests/rename-admission-wiring.ts"],
+	// Autophagy: canonical path identity
+	[JITI, "tests/canonical-path.ts"],
+	[JITI, "tests/path-collision.ts"],
+	[JITI, "tests/path-category.ts"],
 ];
 
 let totalPassed = 0;

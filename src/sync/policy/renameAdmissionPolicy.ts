@@ -8,6 +8,7 @@
  */
 
 import type { PathAdmission } from "./pathAdmissionPolicy";
+import type { PathSyncCategory } from "../../paths/pathCategory";
 
 export type RenameAdmissionDecision =
 	| { kind: "rename"; oldPath: string; newPath: string }
@@ -17,12 +18,7 @@ export type RenameAdmissionDecision =
 
 /**
  * Decide what to do with a rename given the admission status of both paths.
- *
- * Decision matrix:
- *   syncable → syncable   = rename (normal CRDT rename)
- *   syncable → excluded   = tombstone-old (file left sync scope)
- *   excluded → syncable   = admit-new (file entered sync scope)
- *   excluded → excluded   = ignore (irrelevant to sync)
+ * (Legacy API — use planCategoryRenameAction for new code.)
  */
 export function decideRenameAdmission(input: {
 	oldPath: string;
@@ -64,37 +60,46 @@ export function decideRenameAdmission(input: {
 }
 
 // -----------------------------------------------------------------------
-// Action planning — maps decisions into concrete side-effects.
-// main.ts calls planRenameAction, then executes the returned action.
-// This keeps the dispatch logic testable without duplicating a switch.
+// Category-aware rename planning.
+//
+// Actions are split by subject (markdown vs blob) so the executor knows
+// which subsystem to call. Actions that this layer cannot handle are
+// explicitly marked as deferred to existing event handling.
+//
+// IMPORTANT: All execution paths use displayPath (the original runtime
+// path from Obsidian), NOT normalizedPath. Canonical keys are for
+// identity comparison only. Execution APIs have not been migrated.
 // -----------------------------------------------------------------------
 
 export type RenameAction =
-	| { kind: "queue-rename"; oldPath: string; newPath: string }
-	| { kind: "tombstone-old"; oldPath: string; newPath: string; dropDirty: string[] }
-	| { kind: "admit-new"; newPath: string; dropDirty: string[] }
+	| { kind: "queue-markdown-rename"; oldPath: string; newPath: string }
+	| { kind: "queue-blob-rename"; oldPath: string; newPath: string }
+	| { kind: "tombstone-markdown"; oldPath: string; dropDirty: string[] }
+	| { kind: "admit-markdown"; newPath: string; dropDirty: string[] }
+	| { kind: "admit-blob-via-event"; newPath: string; dropDirty: string[] }
+	| { kind: "defer-blob-to-events"; oldPath: string; newPath: string; dropDirty: string[] }
+	| { kind: "same-identity"; oldPath: string; newPath: string }
 	| { kind: "ignore" };
 
 /**
- * Plan the side-effects for a rename admission decision.
- * Pure function — no I/O, no mutation. Caller executes the returned action.
+ * Plan rename action from a RenameAdmissionDecision (legacy path).
+ * Used by callers that still go through admitMarkdownPath + decideRenameAdmission.
  */
 export function planRenameAction(decision: RenameAdmissionDecision): RenameAction {
 	switch (decision.kind) {
 		case "rename":
-			return { kind: "queue-rename", oldPath: decision.oldPath, newPath: decision.newPath };
+			return { kind: "queue-markdown-rename", oldPath: decision.oldPath, newPath: decision.newPath };
 
 		case "tombstone-old":
 			return {
-				kind: "tombstone-old",
+				kind: "tombstone-markdown",
 				oldPath: decision.oldPath,
-				newPath: decision.newPath,
 				dropDirty: [decision.oldPath, decision.newPath],
 			};
 
 		case "admit-new":
 			return {
-				kind: "admit-new",
+				kind: "admit-markdown",
 				newPath: decision.newPath,
 				dropDirty: [decision.oldPath],
 			};
@@ -102,4 +107,88 @@ export function planRenameAction(decision: RenameAdmissionDecision): RenameActio
 		case "ignore":
 			return { kind: "ignore" };
 	}
+}
+
+/**
+ * Plan rename action from PathSyncCategory objects (preferred API).
+ *
+ * Uses displayPath for all execution paths. Canonical keys are used
+ * only for same-identity detection.
+ *
+ * Full category matrix:
+ *   same canonical key           = same-identity (no-op)
+ *   markdown → markdown          = queue markdown rename
+ *   markdown → blob              = tombstone markdown (blob via Obsidian create event)
+ *   markdown → excluded          = tombstone markdown
+ *   blob     → blob              = queue blob rename
+ *   blob     → markdown          = admit markdown (blob via Obsidian delete event)
+ *   blob     → excluded          = defer to blob events (Obsidian delete event)
+ *   excluded → markdown          = admit markdown
+ *   excluded → blob              = admit blob (via Obsidian create event)
+ *   excluded → excluded          = ignore
+ */
+export function planCategoryRenameAction(input: {
+	oldCategory: PathSyncCategory;
+	newCategory: PathSyncCategory;
+}): RenameAction {
+	const { oldCategory, newCategory } = input;
+
+	// Use displayPath for execution — existing APIs have not been migrated
+	// to canonical keys.
+	const oldPath = oldCategory.path.displayPath;
+	const newPath = newCategory.path.displayPath;
+
+	// Same canonical identity = no-op. Rename between NFC/NFD forms or
+	// separator variants does not create a new sync identity.
+	if (oldCategory.path.canonicalKey === newCategory.path.canonicalKey) {
+		return { kind: "same-identity", oldPath, newPath };
+	}
+
+	// excluded → excluded
+	if (oldCategory.kind === "excluded" && newCategory.kind === "excluded") {
+		return { kind: "ignore" };
+	}
+
+	// excluded → markdown
+	if (oldCategory.kind === "excluded" && newCategory.kind === "markdown") {
+		return { kind: "admit-markdown", newPath, dropDirty: [oldPath] };
+	}
+
+	// excluded → blob
+	if (oldCategory.kind === "excluded" && newCategory.kind === "blob") {
+		return { kind: "admit-blob-via-event", newPath, dropDirty: [oldPath] };
+	}
+
+	// markdown → excluded
+	if (oldCategory.kind === "markdown" && newCategory.kind === "excluded") {
+		return { kind: "tombstone-markdown", oldPath, dropDirty: [oldPath, newPath] };
+	}
+
+	// markdown → markdown
+	if (oldCategory.kind === "markdown" && newCategory.kind === "markdown") {
+		return { kind: "queue-markdown-rename", oldPath, newPath };
+	}
+
+	// markdown → blob (markdown identity removed, blob appears via create event)
+	if (oldCategory.kind === "markdown" && newCategory.kind === "blob") {
+		return { kind: "tombstone-markdown", oldPath, dropDirty: [oldPath, newPath] };
+	}
+
+	// blob → excluded (blob leaves sync scope, handled by Obsidian delete event)
+	if (oldCategory.kind === "blob" && newCategory.kind === "excluded") {
+		return { kind: "defer-blob-to-events", oldPath, newPath, dropDirty: [oldPath, newPath] };
+	}
+
+	// blob → blob
+	if (oldCategory.kind === "blob" && newCategory.kind === "blob") {
+		return { kind: "queue-blob-rename", oldPath, newPath };
+	}
+
+	// blob → markdown (admit markdown, blob removed via Obsidian delete event)
+	if (oldCategory.kind === "blob" && newCategory.kind === "markdown") {
+		return { kind: "admit-markdown", newPath, dropDirty: [oldPath] };
+	}
+
+	// Unreachable — all 9 cases handled above.
+	return { kind: "ignore" };
 }

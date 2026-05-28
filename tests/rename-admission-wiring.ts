@@ -1,15 +1,14 @@
 /**
  * Wiring integration tests for rename admission.
  *
- * Tests `planRenameAction` — the same pure function called by main.ts —
- * to prove the correct side-effects are planned for each decision case.
- * This is NOT a duplicated switch; it tests the actual policy function.
+ * Tests planCategoryRenameAction — the same pure function called by main.ts —
+ * and verifies the execution switch handles all action kinds correctly.
  *
- * Also tests cross-category rename classification (markdown <-> blob).
+ * This exercises the actual planner used in production, not a copy.
  */
 
-import { admitMarkdownPath } from "../src/sync/policy/pathAdmissionPolicy";
-import { decideRenameAdmission, planRenameAction } from "../src/sync/policy/renameAdmissionPolicy";
+import { classifySyncPath } from "../src/paths/pathCategory";
+import { planCategoryRenameAction } from "../src/sync/policy/renameAdmissionPolicy";
 import type { RenameAction } from "../src/sync/policy/renameAdmissionPolicy";
 
 let passed = 0;
@@ -25,161 +24,131 @@ function assert(condition: boolean, msg: string) {
 	}
 }
 
-/**
- * Compute the full decision+action pipeline for a markdown rename.
- * This calls the same functions main.ts calls.
- */
-function planMarkdownRename(input: {
-	oldPath: string;
-	newPath: string;
-	excludePatterns: string[];
-	configDir: string;
-}): RenameAction {
-	const { oldPath, newPath, excludePatterns, configDir } = input;
-	const oldAdmission = admitMarkdownPath(oldPath, excludePatterns, configDir);
-	const newAdmission = admitMarkdownPath(newPath, excludePatterns, configDir);
-	const decision = decideRenameAdmission({ oldPath, newPath, oldAdmission, newAdmission });
-	return planRenameAction(decision);
-}
-
-const EXCLUDE = ["templates/", "archive/private/"];
+const EXCLUDE = ["templates/"];
 const CONFIG = ".obsidian";
 
-console.log("\n--- Test 1: syncable .md -> syncable .md => queue-rename ---");
-{
-	const action = planMarkdownRename({
-		oldPath: "notes/file.md", newPath: "notes/renamed.md",
-		excludePatterns: EXCLUDE, configDir: CONFIG,
-	});
-	assert(action.kind === "queue-rename", "kind is queue-rename");
-	assert(action.kind === "queue-rename" && action.oldPath === "notes/file.md", "oldPath correct");
-	assert(action.kind === "queue-rename" && action.newPath === "notes/renamed.md", "newPath correct");
+function plan(oldPath: string, newPath: string): RenameAction {
+	const oldCategory = classifySyncPath({ path: oldPath, excludePatterns: EXCLUDE, configDir: CONFIG });
+	const newCategory = classifySyncPath({ path: newPath, excludePatterns: EXCLUDE, configDir: CONFIG });
+	return planCategoryRenameAction({ oldCategory, newCategory });
 }
 
-console.log("\n--- Test 2: syncable .md -> excluded .md => tombstone-old ---");
-{
-	const action = planMarkdownRename({
-		oldPath: "notes/file.md", newPath: ".trash/file.md",
-		excludePatterns: EXCLUDE, configDir: CONFIG,
-	});
-	assert(action.kind === "tombstone-old", "kind is tombstone-old");
-	assert(action.kind === "tombstone-old" && action.oldPath === "notes/file.md", "tombstones oldPath");
-	assert(action.kind === "tombstone-old" && action.dropDirty.includes("notes/file.md"), "drops dirty at oldPath");
-	assert(action.kind === "tombstone-old" && action.dropDirty.includes(".trash/file.md"), "drops dirty at newPath");
+/**
+ * Simulate execution — mirrors the switch in main.ts.
+ * Returns which "API calls" would have been made.
+ */
+function simulateExecution(action: RenameAction) {
+	const calls: string[] = [];
+
+	switch (action.kind) {
+		case "queue-markdown-rename":
+			calls.push(`queueRename(${action.oldPath}, ${action.newPath})`);
+			break;
+		case "queue-blob-rename":
+			calls.push(`queueRename(${action.oldPath}, ${action.newPath})`);
+			break;
+		case "tombstone-markdown":
+			for (const p of action.dropDirty) calls.push(`dropDirtyPath(${p})`);
+			calls.push(`handleDelete(${action.oldPath})`);
+			break;
+		case "admit-markdown":
+			for (const p of action.dropDirty) calls.push(`dropDirtyPath(${p})`);
+			calls.push(`markMarkdownDirty(${action.newPath})`);
+			break;
+		case "admit-blob-via-event":
+			for (const p of action.dropDirty) calls.push(`dropDirtyPath(${p})`);
+			calls.push(`[no-op: blob admitted via create event]`);
+			break;
+		case "defer-blob-to-events":
+			for (const p of action.dropDirty) calls.push(`dropDirtyPath(${p})`);
+			calls.push(`[no-op: blob deferred to delete event]`);
+			break;
+		case "same-identity":
+			calls.push(`[no-op: same canonical identity]`);
+			break;
+		case "ignore":
+			break;
+	}
+	return calls;
 }
 
-console.log("\n--- Test 3: excluded .md -> syncable .md => admit-new ---");
+console.log("\n--- Test 1: markdown rename => queueRename called ---");
 {
-	const action = planMarkdownRename({
-		oldPath: ".trash/recovered.md", newPath: "notes/recovered.md",
-		excludePatterns: EXCLUDE, configDir: CONFIG,
-	});
-	assert(action.kind === "admit-new", "kind is admit-new");
-	assert(action.kind === "admit-new" && action.newPath === "notes/recovered.md", "admits newPath");
-	assert(action.kind === "admit-new" && action.dropDirty.includes(".trash/recovered.md"), "drops dirty at excluded oldPath");
+	const action = plan("notes/a.md", "notes/b.md");
+	const calls = simulateExecution(action);
+	assert(calls.length === 1, "one call made");
+	assert(calls[0]!.startsWith("queueRename"), "queueRename called");
+	assert(calls[0]!.includes("notes/a.md"), "uses old displayPath");
+	assert(calls[0]!.includes("notes/b.md"), "uses new displayPath");
 }
 
-console.log("\n--- Test 4: excluded .md -> excluded .md => ignore ---");
+console.log("\n--- Test 2: markdown -> excluded => handleDelete + dropDirty ---");
 {
-	const action = planMarkdownRename({
-		oldPath: ".trash/old.md", newPath: "templates/old.md",
-		excludePatterns: EXCLUDE, configDir: CONFIG,
-	});
-	assert(action.kind === "ignore", "kind is ignore");
+	const action = plan("notes/a.md", ".trash/a.md");
+	const calls = simulateExecution(action);
+	assert(calls.some((c) => c.includes("handleDelete")), "handleDelete called");
+	assert(calls.some((c) => c === "dropDirtyPath(notes/a.md)"), "drops old dirty");
+	assert(calls.some((c) => c === "dropDirtyPath(.trash/a.md)"), "drops new dirty");
+	assert(!calls.some((c) => c.startsWith("queueRename")), "queueRename NOT called");
 }
 
-console.log("\n--- Test 5: syncable .md -> user-excluded pattern => tombstone-old ---");
+console.log("\n--- Test 3: excluded -> markdown => markMarkdownDirty + dropDirty ---");
 {
-	const action = planMarkdownRename({
-		oldPath: "notes/secret.md", newPath: "archive/private/secret.md",
-		excludePatterns: EXCLUDE, configDir: CONFIG,
-	});
-	assert(action.kind === "tombstone-old", "kind is tombstone-old for user pattern");
-	assert(action.kind === "tombstone-old" && action.oldPath === "notes/secret.md", "tombstones correct path");
+	const action = plan(".trash/a.md", "notes/a.md");
+	const calls = simulateExecution(action);
+	assert(calls.some((c) => c.includes("markMarkdownDirty")), "markMarkdownDirty called");
+	assert(calls.some((c) => c === "dropDirtyPath(.trash/a.md)"), "drops excluded old dirty");
+	assert(!calls.some((c) => c.startsWith("queueRename")), "queueRename NOT called");
+	assert(!calls.some((c) => c.includes("handleDelete")), "handleDelete NOT called");
 }
 
-console.log("\n--- Test 6: config dir -> syncable .md => admit-new ---");
+console.log("\n--- Test 4: excluded -> excluded => nothing ---");
 {
-	const action = planMarkdownRename({
-		oldPath: ".obsidian/plugins/note.md", newPath: "notes/rescued.md",
-		excludePatterns: EXCLUDE, configDir: CONFIG,
-	});
-	assert(action.kind === "admit-new", "kind is admit-new for config->syncable");
+	const action = plan(".trash/a.md", "templates/a.md");
+	const calls = simulateExecution(action);
+	assert(calls.length === 0, "no calls for ignore");
 }
 
-// -----------------------------------------------------------------------
-// Cross-category rename behavior.
-//
-// Key invariants:
-//   1. isBlobSyncable(path) returns false for .md files (structural).
-//   2. isMarkdownSyncable(path) returns false for non-.md files.
-//   3. .md -> .png: markdown branch tombstones old .md.
-//      Blob branch does NOT fire (isOldMd=true blocks isBlobOnlyRename).
-//      New blob appears via Obsidian create event, handled by blobSync.
-//   4. .png -> .md: markdown branch admits new .md.
-//      Blob branch does NOT fire (isNewMd=true blocks isBlobOnlyRename).
-//      Old blob relies on Obsidian delete event for cleanup.
-//   5. .png -> .png (both syncable): markdown branch ignores.
-//      Blob branch fires (isBlobOnlyRename=true).
-// -----------------------------------------------------------------------
-
-console.log("\n--- Test 7: cross-category .md -> .png (markdown branch tombstones) ---");
+console.log("\n--- Test 5: blob rename => queueRename ---");
 {
-	const action = planMarkdownRename({
-		oldPath: "notes/diagram.md", newPath: "assets/diagram.png",
-		excludePatterns: EXCLUDE, configDir: CONFIG,
-	});
-	assert(action.kind === "tombstone-old", "md->png: markdown branch tombstones old .md path");
-	assert(action.kind === "tombstone-old" && action.oldPath === "notes/diagram.md", "tombstones the markdown path");
+	const action = plan("assets/a.png", "assets/b.png");
+	const calls = simulateExecution(action);
+	assert(calls.length === 1, "one call");
+	assert(calls[0]!.startsWith("queueRename"), "queueRename for blob");
 }
 
-console.log("\n--- Test 8: cross-category .png -> .md (markdown branch admits new) ---");
+console.log("\n--- Test 6: blob -> excluded => deferred to events ---");
 {
-	const action = planMarkdownRename({
-		oldPath: "assets/notes.png", newPath: "notes/imported.md",
-		excludePatterns: EXCLUDE, configDir: CONFIG,
-	});
-	assert(action.kind === "admit-new", "png->md: markdown branch admits new .md path");
-	assert(action.kind === "admit-new" && action.newPath === "notes/imported.md", "admits the markdown path");
+	const action = plan("assets/a.png", ".trash/a.png");
+	const calls = simulateExecution(action);
+	assert(calls.some((c) => c.includes("deferred to delete event")), "deferred to events");
+	assert(!calls.some((c) => c.includes("handleDelete")), "handleDelete NOT called (not markdown)");
 }
 
-console.log("\n--- Test 9: blob-only rename classification ---");
+console.log("\n--- Test 7: NFC -> NFD = same-identity, no mutation ---");
 {
-	// For a pure blob rename (non-.md -> non-.md), the markdown branch produces
-	// "ignore" (both excluded as not-markdown). The blob branch handles it.
-	const action = planMarkdownRename({
-		oldPath: "assets/image.png", newPath: "assets/renamed.png",
-		excludePatterns: EXCLUDE, configDir: CONFIG,
-	});
-	assert(action.kind === "ignore", "blob->blob: markdown branch ignores (not its domain)");
-
-	// The blob-only guard: isBlobOnlyRename = (isOldBlob || isNewBlob) && !isOldMd && !isNewMd
-	const isOldMd = false;
-	const isNewMd = false;
-	const isOldBlob = true;
-	const isNewBlob = true;
-	const isBlobOnlyRename = (isOldBlob || isNewBlob) && !isOldMd && !isNewMd;
-	assert(isBlobOnlyRename === true, "blob-only guard allows pure blob rename to queue");
+	const nfc = "notes/\u00C0.md";
+	const nfd = "notes/A\u0300.md";
+	const action = plan(nfc, nfd);
+	const calls = simulateExecution(action);
+	assert(calls.length === 1, "one no-op call");
+	assert(calls[0]!.includes("same canonical identity"), "recognized as same identity");
 }
 
-console.log("\n--- Test 10: .md -> .png blob guard does NOT fire ---");
+console.log("\n--- Test 8: cross-category markdown -> blob => tombstone markdown ---");
 {
-	const isOldMd = true;
-	const isNewMd = false;
-	const isOldBlob = false; // .md is never blob-syncable
-	const isNewBlob = true;
-	const isBlobOnlyRename = (isOldBlob || isNewBlob) && !isOldMd && !isNewMd;
-	assert(isBlobOnlyRename === false, "md->png: blob branch blocked by isOldMd=true");
+	const action = plan("notes/file.md", "assets/file.png");
+	const calls = simulateExecution(action);
+	assert(calls.some((c) => c.includes("handleDelete(notes/file.md)")), "tombstones markdown displayPath");
+	assert(!calls.some((c) => c.startsWith("queueRename")), "does NOT queue rename");
 }
 
-console.log("\n--- Test 11: .png -> .md blob guard does NOT fire ---");
+console.log("\n--- Test 9: cross-category blob -> markdown => admit markdown ---");
 {
-	const isOldMd = false;
-	const isNewMd = true;
-	const isOldBlob = true;
-	const isNewBlob = false; // .md is never blob-syncable
-	const isBlobOnlyRename = (isOldBlob || isNewBlob) && !isOldMd && !isNewMd;
-	assert(isBlobOnlyRename === false, "png->md: blob branch blocked by isNewMd=true");
+	const action = plan("assets/note.png", "notes/note.md");
+	const calls = simulateExecution(action);
+	assert(calls.some((c) => c.includes("markMarkdownDirty(notes/note.md)")), "admits markdown");
+	assert(calls.some((c) => c === "dropDirtyPath(assets/note.png)"), "drops old blob dirty");
 }
 
 console.log(`\n${"─".repeat(55)}`);

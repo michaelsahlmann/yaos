@@ -55,3 +55,11 @@ regressions must pass
 new/changed files must lint clean
 no new product semantics introduced
 ```
+
+## Follow-ups (not in current autophagy scope)
+
+- Wire findCanonicalPathCollisions into disk scan / reconcile admission
+  before importing multiple paths. Current phase introduces the detection
+  primitive only; vault-wide collision enforcement is future work.
+- Migrate existing .normalize("NFC") call sites to use canonicalPath module.
+- Case-folding product decision (platform-dependent, deferred).
