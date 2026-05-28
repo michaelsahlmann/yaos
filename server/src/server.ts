@@ -190,9 +190,10 @@ export class VaultSyncServer extends YServer {
 		}
 
 		if (request.method === "GET" && url.pathname === "/__yaos/debug") {
-			// Force document load so debug shows cold-loaded durable state.
-			// This is critical for deployment validation of Issue #24.
-			await this.ensureDocumentLoaded();
+			// Do NOT call ensureDocumentLoaded() here (issue #40 fix).
+			// Debug polling is periodic and must not trigger a checkpoint load
+			// on every poll.  documentSummary is conditionally included only if
+			// the document is already in memory.
 			const recent = await listRecentTraceEntries(this.ctx.storage, TRACE_DEBUG_LIMIT);
 			const coordinator = this.getPersistenceCoordinator();
 			const serverHealth: ServerPersistenceHealth = {
@@ -206,7 +207,7 @@ export class VaultSyncServer extends YServer {
 				recent,
 				svEcho: { ...this.svEchoCounters },
 				persistence: serverHealth,
-				documentSummary: this.getDocumentSummary(),
+				documentSummary: this.documentLoaded ? this.getDocumentSummary() : null,
 			});
 		}
 
@@ -235,6 +236,18 @@ export class VaultSyncServer extends YServer {
 				body = {};
 			}
 			return json(await this.createDailySnapshotMaybe(body.device));
+		}
+
+		// PartyServer internal management routes (e.g. /cdn-cgi/partyserver/set-name/)
+		// must not hydrate the document (issue #40 fix).  These are framework
+		// bookkeeping calls that do not need the Y.Doc in memory.  The observed
+		// offender was /cdn-cgi/partyserver/set-name/ pairing with checkpoint-load
+		// on every reconnect.  Non-WebSocket internal routes are safe to delegate
+		// directly to the framework without document hydration.
+		const isPartyServerInternal = url.pathname.startsWith("/cdn-cgi/partyserver/");
+		const isWebSocketUpgrade = request.headers.get("upgrade")?.toLowerCase() === "websocket";
+		if (isPartyServerInternal && !isWebSocketUpgrade) {
+			return super.fetch(request);
 		}
 
 		await this.ensureDocumentLoaded();
