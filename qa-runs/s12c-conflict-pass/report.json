@@ -3,7 +3,7 @@
     "ok": true,
     "bundleCount": 2,
     "eventCount": 7,
-    "scenarioRunId": "s12c-conflict-1779746543538",
+    "scenarioRunId": "s12c-conflict-1779899186621",
     "scenarioId": "s12c-conflict"
   },
   "bundle_validation": {
@@ -23,11 +23,11 @@
   "diagnostic_observations": {
     "transient_open_editor_disk_lag": [
       {
-        "deviceId": "abe2a07d-4af3-433f-a81d-abf843f8c6f0",
-        "seq": 2,
+        "deviceId": "804c7cdd-410c-4cf6-8857-6b018d7511ff",
+        "seq": 1208,
         "classification": "transient_open_editor_disk_lag",
         "severity": "diagnostic",
-        "note": "disk_crdt_mismatch with fileOpen=true, editorSampleKind=healthy_sampled, editorHash===crdtHash. DiskMirror open-write deferral window. Not a correctness failure.",
+        "note": "disk_crdt_mismatch with fileOpen=true, editorSampleKind=healthy_sampled (proxy for editor/CRDT agreement). DiskMirror open-write deferral window. Diagnostic only if final convergence proves editorHash==crdtHash==diskHash.",
         "data": {
           "stateKind": "present",
           "editorSampleKind": "healthy_sampled",
@@ -36,10 +36,10 @@
           "stableAfterMs": 2000,
           "runtimeState": "foreground",
           "causedByEvents": {},
-          "lastLocalEditAt": 1779746558155,
+          "lastLocalEditAt": 1779899202283,
           "scenarioStepIndex": 1,
           "scenarioStepLabel": "baseline-quorum",
-          "scenarioRunId": "s12c-conflict-1779746543538",
+          "scenarioRunId": "s12c-conflict-1779899186621",
           "scenarioId": "s12c-conflict",
           "crdtHash": "h:7584dea9fd52997a21aea279976d60d4",
           "diskHash": "h:2eb048dfef66e4d5b0cd877a7428babe",
@@ -56,7 +56,7 @@
         {
           "kind": "device.witness.settled",
           "seq": 1,
-          "fileId": "0B9x5KOnVGoV3UAd",
+          "fileId": "Flr3VNCTfKt7UdrD",
           "data": {
             "stateKind": "present",
             "editorSampleKind": "not_open",
@@ -65,10 +65,10 @@
             "stableAfterMs": 2000,
             "runtimeState": "foreground",
             "causedByEvents": {},
-            "lastDiskWriteAt": 1779746548078,
+            "lastDiskWriteAt": 1779899192161,
             "scenarioStepIndex": 1,
             "scenarioStepLabel": "baseline-quorum",
-            "scenarioRunId": "s12c-conflict-1779746543538",
+            "scenarioRunId": "s12c-conflict-1779899186621",
             "scenarioId": "s12c-conflict",
             "stateHash": "h:2eb048dfef66e4d5b0cd877a7428babe",
             "crdtHash": "h:2eb048dfef66e4d5b0cd877a7428babe",
@@ -76,12 +76,12 @@
             "diskMatchesCrdt": true
           },
           "pathId": "p:0a2183b606b21402ee7ee9f830f0a095",
-          "deviceId": "abe2a07d-4af3-433f-a81d-abf843f8c6f0"
+          "deviceId": "804c7cdd-410c-4cf6-8857-6b018d7511ff"
         },
         {
           "kind": "device.witness.settled",
-          "seq": 3,
-          "fileId": "0B9x5KOnVGoV3UAd",
+          "seq": 1209,
+          "fileId": "Flr3VNCTfKt7UdrD",
           "data": {
             "stateKind": "present",
             "editorSampleKind": "healthy_sampled",
@@ -90,11 +90,11 @@
             "stableAfterMs": 2000,
             "runtimeState": "foreground",
             "causedByEvents": {},
-            "lastRemoteApplyAt": 1779746563222,
-            "lastDiskWriteAt": 1779746564731,
+            "lastRemoteApplyAt": 1779899208144,
+            "lastDiskWriteAt": 1779899209648,
             "scenarioStepIndex": 1,
             "scenarioStepLabel": "baseline-quorum",
-            "scenarioRunId": "s12c-conflict-1779746543538",
+            "scenarioRunId": "s12c-conflict-1779899186621",
             "scenarioId": "s12c-conflict",
             "stateHash": "h:f1e05473a578fd6ec286422473546260",
             "crdtHash": "h:f1e05473a578fd6ec286422473546260",
@@ -104,12 +104,12 @@
             "editorMatchesCrdt": true
           },
           "pathId": "p:0a2183b606b21402ee7ee9f830f0a095",
-          "deviceId": "abe2a07d-4af3-433f-a81d-abf843f8c6f0"
+          "deviceId": "804c7cdd-410c-4cf6-8857-6b018d7511ff"
         },
         {
           "kind": "device.witness.settled",
-          "seq": 4,
-          "fileId": "0B9x5KOnVGoV3UAd",
+          "seq": 1210,
+          "fileId": "Flr3VNCTfKt7UdrD",
           "data": {
             "stateKind": "present",
             "editorSampleKind": "healthy_sampled",
@@ -118,10 +118,10 @@
             "stableAfterMs": 2000,
             "runtimeState": "foreground",
             "causedByEvents": {},
-            "lastDiskWriteAt": 1779746573745,
+            "lastDiskWriteAt": 1779899217847,
             "scenarioStepIndex": 3,
             "scenarioStepLabel": "post-resync-convergence",
-            "scenarioRunId": "s12c-conflict-1779746543538",
+            "scenarioRunId": "s12c-conflict-1779899186621",
             "scenarioId": "s12c-conflict",
             "stateHash": "h:f1e05473a578fd6ec286422473546260",
             "crdtHash": "h:f1e05473a578fd6ec286422473546260",
@@ -131,12 +131,12 @@
             "editorMatchesCrdt": true
           },
           "pathId": "p:0a2183b606b21402ee7ee9f830f0a095",
-          "deviceId": "abe2a07d-4af3-433f-a81d-abf843f8c6f0"
+          "deviceId": "804c7cdd-410c-4cf6-8857-6b018d7511ff"
         },
         {
           "kind": "device.witness.settled",
           "seq": 1,
-          "fileId": "0B9x5KOnVGoV3UAd",
+          "fileId": "Flr3VNCTfKt7UdrD",
           "data": {
             "stateKind": "present",
             "editorSampleKind": "not_open",
@@ -145,18 +145,18 @@
             "stableAfterMs": 2000,
             "runtimeState": "foreground",
             "causedByEvents": {},
-            "lastDiskWriteAt": 1779746573747,
+            "lastDiskWriteAt": 1779899217848,
             "scenarioStepIndex": 3,
             "scenarioStepLabel": "post-resync-convergence",
-            "scenarioRunId": "s12c-conflict-1779746543538",
+            "scenarioRunId": "s12c-conflict-1779899186621",
             "scenarioId": "s12c-conflict",
             "stateHash": "h:f1e05473a578fd6ec286422473546260",
             "crdtHash": "h:f1e05473a578fd6ec286422473546260",
             "diskHash": "h:f1e05473a578fd6ec286422473546260",
             "diskMatchesCrdt": true
           },
-          "pathId": "p:f0338176f0b795676f799171b1142b48",
-          "deviceId": "7f8dcb15-15bd-47f7-aac7-7c68197ad486"
+          "pathId": "p:bce0c8cfe42b036d1cb3ff6041d47f53",
+          "deviceId": "54746d24-ce06-43f5-a5fb-4d33925c4238"
         }
       ],
       "summary": "No sync-correctness divergences. 4 settled event(s)."
@@ -184,8 +184,8 @@
       "ok": true,
       "evidence": [
         {
-          "abe2a07d-4af3-433f-a81d-abf843f8c6f0": "h:f1e05473a578fd6ec286422473546260",
-          "7f8dcb15-15bd-47f7-aac7-7c68197ad486": "h:f1e05473a578fd6ec286422473546260"
+          "804c7cdd-410c-4cf6-8857-6b018d7511ff": "h:f1e05473a578fd6ec286422473546260",
+          "54746d24-ce06-43f5-a5fb-4d33925c4238": "h:f1e05473a578fd6ec286422473546260"
         }
       ],
       "summary": "All devices agree on hash: h:f1e05473a578fd6ec286422473546260"
@@ -195,19 +195,19 @@
       "ok": true,
       "evidence": [
         {
-          "abe2a07d-4af3-433f-a81d-abf843f8c6f0": {
+          "804c7cdd-410c-4cf6-8857-6b018d7511ff": {
             "settled": true,
-            "seq": 3,
+            "seq": 1209,
             "scenarioStepIndex": 1
           },
-          "7f8dcb15-15bd-47f7-aac7-7c68197ad486": {
+          "54746d24-ce06-43f5-a5fb-4d33925c4238": {
             "settled": true,
             "seq": 1,
             "scenarioStepIndex": 3
           }
         }
       ],
-      "summary": "Device abe2a07d-4af3-433f-a81d-abf843f8c6f0 settled with h:f1e05473a578fd6ec286422473546260 at step 1 (seq 3). Device 7f8dcb15-15bd-47f7-aac7-7c68197ad486 settled with h:f1e05473a578fd6ec286422473546260 at step 3 (seq 1). No stale rewinds detected. No recovery emitted old hash."
+      "summary": "Device 804c7cdd-410c-4cf6-8857-6b018d7511ff settled with h:f1e05473a578fd6ec286422473546260 at step 1 (seq 1209). Device 54746d24-ce06-43f5-a5fb-4d33925c4238 settled with h:f1e05473a578fd6ec286422473546260 at step 3 (seq 1). No stale rewinds detected. No recovery emitted old hash."
     }
   ]
 }
