@@ -1361,65 +1361,6 @@ export default class VaultCrdtSyncPlugin extends Plugin {
 		);
 	}
 
-	private showFrontmatterGuardNotice(path: string): void {
-		this.frontmatterGuardCoordinator.showFrontmatterGuardNotice(path);
-	}
-
-	private buildFrontmatterNoticeFingerprint(
-		validation: FrontmatterValidationResult,
-	): string {
-		return this.frontmatterGuardCoordinator.buildFrontmatterNoticeFingerprint(validation);
-	}
-
-	private shouldNotifyFrontmatterQuarantine(
-		path: string,
-		direction: "disk-to-crdt" | "crdt-to-disk",
-		noticeFingerprint: string,
-	): boolean {
-		return this.frontmatterGuardCoordinator.shouldNotifyFrontmatterQuarantine(
-			path, direction, noticeFingerprint,
-		);
-	}
-
-	private clearFrontmatterNoticeFingerprint(
-		path: string,
-		direction: "disk-to-crdt" | "crdt-to-disk",
-	): void {
-		this.frontmatterGuardCoordinator.clearFrontmatterNoticeFingerprint(path, direction);
-	}
-
-	private traceFrontmatterQuarantine(
-		path: string,
-		direction: "disk-to-crdt" | "crdt-to-disk",
-		reason: string,
-		validation: FrontmatterValidationResult,
-		previousLength: number | null,
-		nextLength: number,
-	): void {
-		this.frontmatterGuardCoordinator.traceFrontmatterQuarantine(
-			path, direction, reason, validation, previousLength, nextLength,
-		);
-	}
-
-	private async persistFrontmatterQuarantine(
-		path: string,
-		direction: "disk-to-crdt" | "crdt-to-disk",
-		validation: FrontmatterValidationResult,
-		previousContent: string | null,
-		nextContent: string,
-		lastNotifiedFingerprint: string,
-		lastNoticeAt: number | null,
-	): Promise<void> {
-		await this.frontmatterGuardCoordinator.persistFrontmatterQuarantine(
-			path, direction, validation, previousContent, nextContent,
-			lastNotifiedFingerprint, lastNoticeAt,
-		);
-	}
-
-	private async clearFrontmatterQuarantine(path: string, reason: string): Promise<void> {
-		await this.frontmatterGuardCoordinator.clearFrontmatterQuarantine(path, reason);
-	}
-
 	/**
 	 * Toggle remote cursor visibility via a CSS class on the document body.
 	 * The actual cursor styles from y-codemirror.next are hidden when the
