@@ -23,6 +23,13 @@ export interface DomainTraceEvent {
 export interface DomainPathTraceEvent extends DomainTraceEvent {
 	readonly scope: "file";
 	readonly path: string;
+	/**
+	 * Optional priority override. When absent, FlightTraceSink derives
+	 * priority from severity (error→critical, warn/info→important, debug→verbose).
+	 * Use this only when the default mapping is wrong (e.g., diskDeleteObserved
+	 * is severity:info but priority:critical).
+	 */
+	readonly priority?: "critical" | "important" | "verbose";
 }
 
 export interface TraceSink {

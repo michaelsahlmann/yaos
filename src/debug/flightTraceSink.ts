@@ -14,18 +14,36 @@
  */
 
 import type { TraceSink, DomainTraceEvent, DomainPathTraceEvent } from "../observability/traceSink";
-import { FLIGHT_KIND, type FlightKind, type FlightPathEventInput } from "./flightEvents";
+import { FLIGHT_KIND, type FlightKind, type FlightPathEventInput, type FlightLayer } from "./flightEvents";
 
 type FlightPathRecorder = (event: FlightPathEventInput) => void;
 
 /**
  * Map domain event kinds to FLIGHT_KIND constants.
- * Only rename-admission events are mapped in this phase.
+ * Rename cluster + disk observation cluster.
  */
 const DOMAIN_TO_FLIGHT_KIND: Record<string, string> = {
+	// Rename cluster
 	"rename.observed": FLIGHT_KIND.diskRenameObserved,
 	"rename.admission.invariant-failed": FLIGHT_KIND.renameAdmissionInvariantFailed,
+	// Disk observation cluster
+	"disk.create.observed": FLIGHT_KIND.diskCreateObserved,
+	"disk.modify.observed": FLIGHT_KIND.diskModifyObserved,
+	"disk.delete.observed": FLIGHT_KIND.diskDeleteObserved,
+	"disk.event.suppressed": FLIGHT_KIND.diskEventSuppressed,
 };
+
+/**
+ * Map domain event kinds to layer.
+ * Policy layer: admission decisions, suppression decisions.
+ * Disk layer: raw observations.
+ */
+function kindToLayer(kind: string): FlightLayer {
+	if (kind.startsWith("rename.admission") || kind === "disk.event.suppressed") {
+		return "policy";
+	}
+	return "disk";
+}
 
 /**
  * Map domain severity to flight priority.
@@ -64,15 +82,18 @@ export class FlightTraceSink implements TraceSink {
 		}
 
 		this.recordFlight({
-			priority: severityToPriority(event.severity),
+			priority: event.priority ?? severityToPriority(event.severity),
 			kind: flightKind as FlightKind,
 			severity: event.severity,
 			scope: event.scope,
 			source: "vaultEvents",
-			layer: event.kind.startsWith("rename.admission") ? "policy" : "disk",
+			layer: kindToLayer(event.kind),
 			opId: event.opId ?? event.data?.["opId"] as string | undefined,
 			path: event.path,
 			data: event.data,
+			// Lift reason/decision from data for disk.event.suppressed compatibility
+			reason: event.data?.["reason"] as string | undefined,
+			decision: event.data?.["decision"] as string | undefined,
 		});
 	}
 

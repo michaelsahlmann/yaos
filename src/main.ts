@@ -72,7 +72,6 @@ import { EditorWorkspaceOrchestrator } from "./runtime/editorWorkspaceOrchestrat
 import { SetupLinkController } from "./runtime/setupLinkController";
 import { TraceRuntimeController } from "./runtime/traceRuntimeController";
 import { FlightTraceController } from "./debug/flightTraceController";
-import { FLIGHT_KIND } from "./debug/flightEvents";
 import type { FlightMode } from "./debug/flightEvents";
 import { registerCommands } from "./commands";
 import {
@@ -934,13 +933,10 @@ export default class VaultCrdtSyncPlugin extends Plugin {
 					} else {
 						writerGuess = "external";
 					}
-					this.recordFlightPathEvent({
-						priority: "important",
-						kind: FLIGHT_KIND.diskModifyObserved,
-						severity: "info",
+					this.traceSink.recordPath({
+						kind: "disk.modify.observed",
 						scope: "file",
-						source: "vaultEvents",
-						layer: "disk",
+						severity: "info",
 						opId,
 						path: file.path,
 						data: {
@@ -1062,27 +1058,25 @@ export default class VaultCrdtSyncPlugin extends Plugin {
 					const opId = this.newOpId();
 					if (this.diskMirror?.consumeDeleteSuppression(file.path)) {
 						this.log(`Suppressed delete event for "${file.path}"`);
-						this.recordFlightPathEvent({
-							priority: "important",
-							kind: FLIGHT_KIND.diskEventSuppressed,
-							severity: "debug",
+						this.traceSink.recordPath({
+							kind: "disk.event.suppressed",
 							scope: "file",
-							source: "vaultEvents",
-							layer: "policy",
+							severity: "debug",
+							priority: "important",
 							opId,
 							path: file.path,
-							reason: "suppressed-remote-writeback",
-							decision: "suppress",
+							data: {
+								reason: "suppressed-remote-writeback",
+								decision: "suppress",
+							},
 						});
 						return;
 					}
-					this.recordFlightPathEvent({
-						priority: "critical",
-						kind: FLIGHT_KIND.diskDeleteObserved,
-						severity: "info",
+					this.traceSink.recordPath({
+						kind: "disk.delete.observed",
 						scope: "file",
-						source: "vaultEvents",
-						layer: "disk",
+						severity: "info",
+						priority: "critical",
 						opId,
 						path: file.path,
 					});
@@ -1111,13 +1105,10 @@ export default class VaultCrdtSyncPlugin extends Plugin {
 
 				if (this.isMarkdownPathSyncable(file.path)) {
 					const createOpId = this.newOpId();
-					this.recordFlightPathEvent({
-						priority: "important",
-						kind: FLIGHT_KIND.diskCreateObserved,
-						severity: "info",
+					this.traceSink.recordPath({
+						kind: "disk.create.observed",
 						scope: "file",
-						source: "vaultEvents",
-						layer: "disk",
+						severity: "info",
 						opId: createOpId,
 						path: file.path,
 						data: { size: file.stat?.size ?? null },

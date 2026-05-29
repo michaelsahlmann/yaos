@@ -179,6 +179,114 @@ console.log("\n--- Test 8: rename event pair (source + target) ---");
 	assert(recorded[1]!.opId === "op-99", "opId preserved on target");
 }
 
+console.log("\n--- Test 9: disk.create.observed maps correctly ---");
+{
+	const recorded: Array<Record<string, unknown>> = [];
+	const sink = new FlightTraceSink((event) => recorded.push(event as Record<string, unknown>));
+
+	sink.recordPath({
+		kind: "disk.create.observed",
+		scope: "file",
+		severity: "info",
+		opId: "op-create-1",
+		path: "notes/new-file.md",
+		data: { size: 1024 },
+	});
+
+	assert(recorded.length === 1, "one event recorded");
+	assert(recorded[0]!.kind === FLIGHT_KIND.diskCreateObserved, "mapped to diskCreateObserved");
+	assert(recorded[0]!.path === "notes/new-file.md", "path preserved");
+	assert(recorded[0]!.priority === "important", "info severity -> important priority");
+	assert(recorded[0]!.layer === "disk", "layer is disk");
+	assert((recorded[0]!.data as Record<string, unknown>).size === 1024, "data.size preserved");
+}
+
+console.log("\n--- Test 10: disk.modify.observed maps correctly ---");
+{
+	const recorded: Array<Record<string, unknown>> = [];
+	const sink = new FlightTraceSink((event) => recorded.push(event as Record<string, unknown>));
+
+	sink.recordPath({
+		kind: "disk.modify.observed",
+		scope: "file",
+		severity: "info",
+		opId: "op-modify-1",
+		path: "notes/edited.md",
+		data: {
+			size: 2048,
+			writerGuess: "external",
+			suppressWindowActive: false,
+			lastDiskWriteOkAtMs: 1000,
+			msSinceLastDiskWriteOk: 5000,
+		},
+	});
+
+	assert(recorded.length === 1, "one event recorded");
+	assert(recorded[0]!.kind === FLIGHT_KIND.diskModifyObserved, "mapped to diskModifyObserved");
+	assert(recorded[0]!.layer === "disk", "layer is disk");
+	const data = recorded[0]!.data as Record<string, unknown>;
+	assert(data.writerGuess === "external", "data.writerGuess preserved");
+	assert(data.suppressWindowActive === false, "data.suppressWindowActive preserved");
+}
+
+console.log("\n--- Test 11: disk.delete.observed with priority override ---");
+{
+	const recorded: Array<Record<string, unknown>> = [];
+	const sink = new FlightTraceSink((event) => recorded.push(event as Record<string, unknown>));
+
+	sink.recordPath({
+		kind: "disk.delete.observed",
+		scope: "file",
+		severity: "info",
+		priority: "critical",  // explicit override
+		opId: "op-delete-1",
+		path: "notes/deleted.md",
+	});
+
+	assert(recorded.length === 1, "one event recorded");
+	assert(recorded[0]!.kind === FLIGHT_KIND.diskDeleteObserved, "mapped to diskDeleteObserved");
+	assert(recorded[0]!.priority === "critical", "priority override respected (not derived from severity)");
+	assert(recorded[0]!.layer === "disk", "layer is disk");
+}
+
+console.log("\n--- Test 12: disk.event.suppressed with reason/decision extraction ---");
+{
+	const recorded: Array<Record<string, unknown>> = [];
+	const sink = new FlightTraceSink((event) => recorded.push(event as Record<string, unknown>));
+
+	sink.recordPath({
+		kind: "disk.event.suppressed",
+		scope: "file",
+		severity: "debug",
+		priority: "important",  // explicit override
+		opId: "op-suppress-1",
+		path: "notes/suppressed.md",
+		data: {
+			reason: "suppressed-remote-writeback",
+			decision: "suppress",
+		},
+	});
+
+	assert(recorded.length === 1, "one event recorded");
+	assert(recorded[0]!.kind === FLIGHT_KIND.diskEventSuppressed, "mapped to diskEventSuppressed");
+	assert(recorded[0]!.priority === "important", "priority override respected");
+	assert(recorded[0]!.layer === "policy", "layer is policy for suppression");
+	assert(recorded[0]!.reason === "suppressed-remote-writeback", "reason lifted from data");
+	assert(recorded[0]!.decision === "suppress", "decision lifted from data");
+}
+
+console.log("\n--- Test 13: droppedEventCount stays zero for all mapped disk events ---");
+{
+	const sink = new FlightTraceSink(() => {});
+
+	sink.recordPath({ kind: "disk.create.observed", scope: "file", severity: "info", path: "a.md", data: { size: 1 } });
+	sink.recordPath({ kind: "disk.modify.observed", scope: "file", severity: "info", path: "b.md", data: {} });
+	sink.recordPath({ kind: "disk.delete.observed", scope: "file", severity: "info", priority: "critical", path: "c.md" });
+	sink.recordPath({ kind: "disk.event.suppressed", scope: "file", severity: "debug", priority: "important", path: "d.md", data: { reason: "x", decision: "y" } });
+
+	assert(sink.getDroppedEventCount() === 0, "no dropped events for mapped disk kinds");
+}
+
 console.log(`\n${"─".repeat(55)}`);
 console.log(`Results: ${passed} passed, ${failed} failed`);
 console.log(`${"─".repeat(55)}\n`);
