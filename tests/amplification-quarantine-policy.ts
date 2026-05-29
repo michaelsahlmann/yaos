@@ -270,6 +270,50 @@ console.log("\n--- Test 16: Only prevLen growing but not nextLen does not trigge
 	assert(result.quarantined === false, "prevLen-only growth not quarantined");
 }
 
+console.log("\n--- Test 17: Quarantine decision does NOT return newHistory ---");
+{
+	// When quarantined, the policy returns triggerSlice but NOT newHistory.
+	// This is intentional: the caller should DELETE the history, not update it.
+	// This test documents that contract.
+	const history: AmplificationEntry[] = [
+		{ prevLen: 100, nextLen: 110, at: 1000 },
+		{ prevLen: 110, nextLen: 120, at: 2000 },
+	];
+	const result = evaluateAmplificationQuarantine({
+		prevLen: 120,
+		nextLen: 130,
+		now: 3000,
+		history,
+	});
+	assert(result.quarantined === true, "quarantine triggered");
+	if (result.quarantined) {
+		// TypeScript enforces this, but let's be explicit:
+		// @ts-expect-error — newHistory does not exist on quarantined decision
+		const hasNewHistory = "newHistory" in result;
+		assert(!hasNewHistory, "quarantine decision has no newHistory (caller should delete)");
+		assert("triggerSlice" in result, "quarantine decision has triggerSlice");
+	}
+}
+
+console.log("\n--- Test 18: Non-quarantine decision returns newHistory ---");
+{
+	// When NOT quarantined, the policy returns newHistory for the caller to store.
+	const history: AmplificationEntry[] = [
+		{ prevLen: 100, nextLen: 110, at: 1000 },
+	];
+	const result = evaluateAmplificationQuarantine({
+		prevLen: 110,
+		nextLen: 120,
+		now: 2000,
+		history,
+	});
+	assert(result.quarantined === false, "not quarantined");
+	if (!result.quarantined) {
+		assert("newHistory" in result, "non-quarantine decision has newHistory");
+		assert(result.newHistory.length === 2, "newHistory includes new entry");
+	}
+}
+
 console.log("\n───────────────────────────────────────────────────────");
 console.log(`Results: ${passed} passed, ${failed} failed`);
 console.log("───────────────────────────────────────────────────────\n");
