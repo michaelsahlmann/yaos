@@ -34,6 +34,8 @@ import {
 	ORIGIN_DISK_SYNC_OPEN_IDLE_RECOVER,
 } from "../sync/origins";
 import { decideClosedFileConflict } from "../sync/closedFileConflict";
+import { planClosedFileReconcile } from "./reconcile/closedFilePlanner";
+import type { ClosedFileReconcileAction } from "./reconcile/closedFilePlanner";
 
 export interface ReconciliationStats {
 	at: string;
@@ -729,15 +731,8 @@ export class ReconciliationController {
 					) {
 						const crdtContent = yTextToString(ytext) ?? "";
 						// SHA-256 hashes for three-way authority decision.
-						// Must be collision-resistant — a false equality means
-						// "unchanged" which could silently overwrite a local edit.
 						const diskHash = await contentBaselineHash(diskContent);
 						const crdtHash = await contentBaselineHash(crdtContent);
-						// Use persisted baseline hash to determine what actually changed:
-						//   disk == baseline → CRDT changed only → apply-remote-to-disk
-						//   crdt == baseline → disk changed only → import-disk-to-crdt (clean win)
-						//   both != baseline → both changed      → preserve-conflict/both-changed
-						//   baseline null    → unknown           → preserve-conflict/missing-baseline
 						const baselineHash = this.deps.getDiskIndex()[path]?.contentHash ?? null;
 						const diskMtimeRaw = allStats.get(path)?.mtime;
 						const rawLastSave = this.deps.getLastSaveDiskIndexAt?.();
@@ -749,76 +744,79 @@ export class ReconciliationController {
 							rawLastSave <= now
 								? rawLastSave
 								: undefined;
-						const decision = decideClosedFileConflict({
-							baselineHash,
+
+						// Use pure planner for the decision.
+						const action = planClosedFileReconcile({
+							path,
+							mode,
+							isOpenOrBound,
 							diskHash,
 							crdtHash,
+							baselineHash,
 							diskMtime: diskMtimeRaw,
 							lastDiskIndexPersistedAt,
 						});
-					this.deps.recordFlightPathEvent?.({
-						priority: decision.kind === "preserve-conflict" ? "critical" : "important",
-						kind: FLIGHT_KIND.reconcileFileDecision,
-						severity: "info",
-						scope: "file",
-						source: "reconciliationController",
-						layer: "reconcile",
-						path,
-						data: {
-							decision: decision.kind,
-							reason: "reason" in decision ? decision.reason : null,
-							winner: "winner" in decision ? decision.winner : null,
-							diskLength: diskContent.length,
-							crdtLength: crdtContent.length,
-							diskHash,
-							crdtHash,
-							baselineHash,
-							diskChangedSinceBaseline: baselineHash !== null ? diskHash !== baselineHash : null,
-							conflictRisk:
-								decision.kind === "preserve-conflict"
-									? "reason" in decision && decision.reason === "both-changed"
-										? "high"
-										: "ambiguous"
-									: "none",
-							// Missing-baseline diagnostic fields — only present when
-							// reason === "missing-baseline". Explains exactly why disk or
-							// CRDT was chosen so future trace readers don't have to guess.
-							...(decision.kind === "preserve-conflict" && decision.reason === "missing-baseline" && {
-								missingBaselinePolicy: (decision as { _missingBaselinePolicy?: string })._missingBaselinePolicy ?? null,
-								diskMtime: diskMtimeRaw ?? null,
-								lastDiskIndexPersistedAt: lastDiskIndexPersistedAt ?? null,
-								mtimeEvidence: diskMtimeRaw !== undefined && lastDiskIndexPersistedAt !== undefined,
-							}),
-						},
-					});
-						if (decision.kind === "preserve-conflict") {
+
+						// Emit flight event for the decision.
+						this.deps.recordFlightPathEvent?.({
+							priority: action.kind === "create-conflict-artifact" ? "critical" : "important",
+							kind: FLIGHT_KIND.reconcileFileDecision,
+							severity: "info",
+							scope: "file",
+							source: "reconciliationController",
+							layer: "reconcile",
+							path,
+							data: {
+								decision: action.kind,
+								reason: action.reason,
+								winner: action.kind === "create-conflict-artifact" ? action.winner : null,
+								diskLength: diskContent.length,
+								crdtLength: crdtContent.length,
+								diskHash,
+								crdtHash,
+								baselineHash,
+								diskChangedSinceBaseline: baselineHash !== null ? diskHash !== baselineHash : null,
+								conflictRisk:
+									action.kind === "create-conflict-artifact"
+										? action.reason === "both-changed"
+											? "high"
+											: "ambiguous"
+										: "none",
+								...(action.kind === "create-conflict-artifact" && action.reason === "missing-baseline" && {
+									missingBaselinePolicy: action.missingBaselinePolicy ?? null,
+									diskMtime: diskMtimeRaw ?? null,
+									lastDiskIndexPersistedAt: lastDiskIndexPersistedAt ?? null,
+									mtimeEvidence: diskMtimeRaw !== undefined && lastDiskIndexPersistedAt !== undefined,
+								}),
+							},
+						});
+
+						// Execute the planned action.
+						if (action.kind === "create-conflict-artifact") {
 							try {
-								const preservedContent = decision.preserveDisk ? diskContent : crdtContent;
-								const preservedSide = decision.preserveDisk ? "disk" : "crdt";
+								const preservedContent = action.preserveSide === "disk" ? diskContent : crdtContent;
 								const conflictPath = await this.createMarkdownConflictArtifact(
 									path,
 									preservedContent,
-									`closed-file-${decision.reason}`,
-									preservedSide,
+									`closed-file-${action.reason}`,
+									action.preserveSide,
 								);
-								if (decision.winner === "disk") {
+								if (action.winner === "disk") {
 									forceReplaceYText(ytext, diskContent, ORIGIN_DISK_SYNC_RECOVER_BOUND);
-									// Disk wins main file; record disk content as new settled baseline
 									settledHashes.set(path, diskHash);
 								} else {
 									updatesToFlush.push(path);
-									// CRDT wins main file; flushed below, record hash after flush
 								}
 								this.deps.trace("conflict", "closed-file-conflict-preserved", {
 									path,
 									conflictPath,
-									reason: decision.reason,
-									winner: decision.winner,
-									preservedSide,
+									reason: action.reason,
+									winner: action.winner,
+									preservedSide: action.preserveSide,
 									diskLength: diskContent.length,
 									crdtLength: crdtContent.length,
 								});
-								if (decision.winner === "disk") {
+								if (action.winner === "disk") {
 									flushedUpdates++;
 								}
 								continue;
@@ -829,27 +827,25 @@ export class ReconciliationController {
 								);
 								this.deps.trace("conflict", "closed-file-conflict-preserve-failed", {
 									path,
-									reason: decision.reason,
+									reason: action.reason,
 									error: err instanceof Error ? err.message : String(err),
 								});
 								continue;
 							}
 						}
-						if (decision.kind === "import-disk-to-crdt") {
-							// Disk changed, CRDT is still at baseline. Disk wins cleanly.
-							// Import disk content into CRDT — no conflict artifact needed.
+						if (action.kind === "import-disk-to-crdt") {
 							forceReplaceYText(ytext, diskContent, ORIGIN_DISK_SYNC_RECOVER_BOUND);
 							settledHashes.set(path, diskHash);
 							this.deps.trace("reconcile", "closed-file-disk-wins-clean", {
 								path,
-								reason: decision.reason,
+								reason: action.reason,
 								diskLength: diskContent.length,
 								crdtLength: crdtContent.length,
 							});
 							flushedUpdates++;
 							continue;
 						}
-						// decision.kind === "apply-remote-to-disk" or "no-op":
+						// action.kind === "apply-remote-to-disk", "no-op", or "defer-to-crdt-flush":
 						// CRDT wins or nothing to do. Fall through to flush.
 					}
 					updatesToFlush.push(path);

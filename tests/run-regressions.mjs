@@ -138,6 +138,8 @@ const suites = [
 	[JITI, "tests/trace-sink.ts"],
 	// Autophagy: QA port fencing
 	[JITI, "tests/qa-port-fencing.ts"],
+	// Autophagy: ReconciliationController planner/executor
+	[JITI, "tests/closed-file-planner.ts"],
 ];
 
 let totalPassed = 0;
