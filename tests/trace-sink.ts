@@ -83,6 +83,19 @@ console.log("\n--- Test 3: unknown domain event is silently dropped ---");
 	});
 
 	assert(recorded.length === 0, "unknown event dropped silently");
+	assert(sink.getDroppedEventCount() === 1, "dropped event count incremented");
+}
+
+console.log("\n--- Test 3b: getDroppedEventCount tracks multiple drops ---");
+{
+	const sink = new FlightTraceSink(() => {});
+
+	sink.recordPath({ kind: "unknown.a", scope: "file", severity: "debug", path: "a.md" });
+	sink.recordPath({ kind: "unknown.b", scope: "file", severity: "debug", path: "b.md" });
+	sink.recordPath({ kind: "rename.observed", scope: "file", severity: "info", path: "c.md", data: { renameRole: "source", category: "markdown", opId: "op-1" } });
+	sink.recordPath({ kind: "unknown.c", scope: "file", severity: "debug", path: "d.md" });
+
+	assert(sink.getDroppedEventCount() === 3, "dropped count is 3 (excludes mapped event)");
 }
 
 console.log("\n--- Test 4: NoopTraceSink drops everything ---");

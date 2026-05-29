@@ -6,21 +6,33 @@
  *
  * Nothing in this interface mutates CRDT state, forces network changes,
  * or controls QA scenario machinery.
+ *
+ * IMPORTANT: This interface must remain assignable from YaosQaDebugApi.
+ * See the compile-time check in src/qaDebugApi.ts.
  */
 
+/**
+ * Editor binding health — structural type compatible with YaosQaDebugApi.
+ * Uses index signature to accept any additional fields the real API may have.
+ */
 export interface EditorBindingHealth {
-	readonly path: string;
-	readonly hasCm6Extension: boolean;
-	readonly hasYjsBinding: boolean;
-	readonly isQaPaused: boolean;
-	readonly editorViewExists: boolean;
+	readonly leafOpen: boolean;
+	readonly bound: boolean;
+	readonly hasSyncFacet: boolean;
+	readonly yTextMatchesExpected: boolean | null;
+	readonly healthy: boolean;
+	readonly settling: boolean;
+	readonly issues: readonly string[];
 }
 
+/**
+ * Receipt snapshot — structural type compatible with YaosQaDebugApi.
+ */
 export interface ReceiptSnapshot {
-	readonly serverAppliedLocalState: boolean | null;
-	readonly lastServerReceiptEchoAt: number | null;
-	readonly lastKnownServerReceiptEchoAt: number | null;
-	readonly hasCandidateSv: boolean;
+	readonly candidateId: string | null;
+	readonly capturedAt: number | null;
+	readonly lastConfirmedCandidateId: string | null;
+	readonly lastConfirmedAt: number | null;
 }
 
 export interface YaosDebugPort {

@@ -10,6 +10,7 @@
  *   - Maps domain severity to FlightPriority
  *   - Delegates to the provided recordFlightPathEvent callback
  *   - Is non-blocking (recordPath queues internally via the callback)
+ *   - Tracks dropped events for observability in QA/dev mode
  */
 
 import type { TraceSink, DomainTraceEvent, DomainPathTraceEvent } from "../observability/traceSink";
@@ -39,6 +40,12 @@ function severityToPriority(severity: DomainTraceEvent["severity"]): "critical" 
 }
 
 export class FlightTraceSink implements TraceSink {
+	/**
+	 * Count of domain events that were dropped because no FLIGHT_KIND mapping exists.
+	 * Visible via getDroppedEventCount() for QA/dev mode observability.
+	 */
+	private _droppedEventCount = 0;
+
 	constructor(private readonly recordFlight: FlightPathRecorder) {}
 
 	record(_event: DomainTraceEvent): void {
@@ -50,10 +57,9 @@ export class FlightTraceSink implements TraceSink {
 		const flightKind = DOMAIN_TO_FLIGHT_KIND[event.kind];
 		if (!flightKind) {
 			// Unknown domain event — no flight mapping.
-			// TODO: In QA/dev mode, emit a debug counter or log so dropped events
-			// are visible during development. Silent drops in production are
-			// acceptable, but invisible drops during RCA are not.
-			// See: engineering/autophagy-plan.md follow-ups.
+			// Count the drop for QA/dev observability. Silent drops in production
+			// are acceptable, but invisible drops during RCA are not.
+			this._droppedEventCount++;
 			return;
 		}
 
@@ -73,5 +79,16 @@ export class FlightTraceSink implements TraceSink {
 	async flush(): Promise<void> {
 		// Flight recorder handles its own flushing.
 		// This is a no-op unless we need to wait for pending path HMAC work.
+	}
+
+	/**
+	 * Returns the number of domain events dropped because no FLIGHT_KIND mapping exists.
+	 * Use this in QA/dev mode to detect when domain events are being lost silently.
+	 * A non-zero count indicates that either:
+	 *   - A new domain event kind needs to be added to DOMAIN_TO_FLIGHT_KIND
+	 *   - A trace call is using the wrong event kind
+	 */
+	getDroppedEventCount(): number {
+		return this._droppedEventCount;
 	}
 }

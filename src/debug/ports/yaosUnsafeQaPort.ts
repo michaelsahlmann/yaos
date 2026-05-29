@@ -14,6 +14,9 @@
  *   - Pauses/resumes internal subsystems for observation
  *
  * The __qaOnly prefix convention is preserved for grep-ability.
+ *
+ * IMPORTANT: This interface must remain assignable from YaosQaDebugApi.
+ * See the compile-time check in src/qaDebugApi.ts.
  */
 
 export interface YaosUnsafeQaPort {
@@ -21,12 +24,12 @@ export interface YaosUnsafeQaPort {
 	__qaOnlyForceCrdtContentUnsafe(
 		path: string,
 		content: string,
-		opts?: { reason?: string },
-	): Promise<{ beforeHash: string | null; afterHash: string; fileExisted: boolean }>;
+		opts: { originClass: "local" | "remote"; createIfMissing?: boolean },
+	): Promise<{ beforeHash: string | null; afterHash: string | null; fileExisted: boolean }>;
 
 	__qaOnlyForceSyncFileFromDiskUnsafe(
 		path: string,
-		reason?: string,
+		reason?: "create" | "modify",
 	): Promise<void>;
 
 	// --- Editor binding control ---
@@ -37,8 +40,8 @@ export interface YaosUnsafeQaPort {
 	setQaNetworkHold(mode: "offline" | "online"): void;
 
 	// --- Scenario machinery ---
-	__qaOnlySetScenarioRunIdUnsafe(scenarioRunId: string, scenarioId: string): void;
-	__qaOnlyAdvanceScenarioStepUnsafe(stepIndex: number, label?: string): void;
+	__qaOnlySetScenarioRunIdUnsafe?(scenarioRunId: string, scenarioId: string): void;
+	__qaOnlyAdvanceScenarioStepUnsafe?(stepIndex: number, label?: string): void;
 	__qaOnlyEmitPhaseUnsafe(phase: "setup" | "run" | "assert" | "cleanup"): Promise<void>;
 
 	// --- Witness control ---
@@ -47,8 +50,8 @@ export interface YaosUnsafeQaPort {
 
 	// --- Policy override ---
 	__qaOnlySetExternalEditPolicyOverrideUnsafe(
-		policy: "always" | "open-file" | "never" | null,
-	): Promise<{ previous: string | null }>;
+		policy: "always" | "closed-only" | "never" | null,
+	): Promise<{ previous: "always" | "closed-only" | "never" }>;
 
 	// --- Witness observation (read-only but QA-specific) ---
 	witnessDeviceSettled(
@@ -57,6 +60,6 @@ export interface YaosUnsafeQaPort {
 	): Promise<void>;
 	computeWitnessStateHash(content: string): Promise<string>;
 	getDeviceId(): string;
-	getWitnessBuffer?(): readonly unknown[];
+	getWitnessBuffer?(): ReadonlyArray<unknown> | undefined;
 	currentWitnessSeq?(): number;
 }

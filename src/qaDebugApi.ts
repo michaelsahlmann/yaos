@@ -300,41 +300,24 @@ export interface YaosQaDebugApi {
 }
 
 // -----------------------------------------------------------------------
-// Compile-time port satisfaction checks.
-// These ensure YaosQaDebugApi has methods matching YaosDebugPort and
-// YaosUnsafeQaPort. If either port adds a method that YaosQaDebugApi
-// doesn't have (or has an incompatible signature), this file will fail.
+// Compile-time port assignability checks.
+// These ensure YaosQaDebugApi is assignable to both YaosDebugPort and
+// YaosUnsafeQaPort. If any method signature drifts, this file will fail
+// to compile with a clear type error showing the incompatibility.
 // -----------------------------------------------------------------------
 import type { YaosDebugPort } from "./debug/ports/yaosDebugPort";
 import type { YaosUnsafeQaPort } from "./debug/ports/yaosUnsafeQaPort";
 
-// Check that YaosQaDebugApi has all the "safe" debug methods.
-// The return types may differ slightly (port uses simplified types),
-// so we check method existence only.
-type _DebugMethodKeys =
-	| "isLocalReady" | "isProviderSynced" | "isProviderConnected"
-	| "isReconciled" | "isReconcileInFlight" | "getConnectionState"
-	| "getServerReceiptState" | "getReceiptSnapshot"
-	| "getActiveMarkdownPaths" | "getDiskMarkdownPaths"
-	| "getDiskHash" | "getCrdtHash" | "getEditorHash"
-	| "waitForIdle" | "waitForLocalReady" | "waitForProviderSynced"
-	| "waitForReconciled" | "waitForFile" | "waitForReceiptAfter"
-	| "forceReconcile" | "forceReconnect" | "disconnectProvider" | "connectProvider";
+// Full assignability checks — not just method names, but full signatures.
+// If YaosQaDebugApi is not assignable to a port, the compiler will show
+// exactly which methods have incompatible signatures.
+type _AssertDebugPortAssignable = YaosQaDebugApi extends YaosDebugPort ? true : never;
+type _AssertUnsafePortAssignable = YaosQaDebugApi extends YaosUnsafeQaPort ? true : never;
 
-type _UnsafeMethodKeys =
-	| "__qaOnlyForceCrdtContentUnsafe" | "__qaOnlyForceSyncFileFromDiskUnsafe"
-	| "__qaOnlyPauseEditorBindingPropagationUnsafe"
-	| "__qaOnlyResumeEditorBindingPropagationUnsafe"
-	| "setQaNetworkHold" | "__qaOnlySetScenarioRunIdUnsafe"
-	| "__qaOnlyAdvanceScenarioStepUnsafe" | "__qaOnlyEmitPhaseUnsafe"
-	| "witnessDeviceSettled" | "computeWitnessStateHash" | "getDeviceId";
-
-// These will fail to compile if YaosQaDebugApi is missing any of the listed methods.
-type _AssertHasDebugMethods = _DebugMethodKeys extends keyof YaosQaDebugApi ? true : never;
-type _AssertHasUnsafeMethods = _UnsafeMethodKeys extends keyof YaosQaDebugApi ? true : never;
-const _hasDebug: _AssertHasDebugMethods = true;
-const _hasUnsafe: _AssertHasUnsafeMethods = true;
-void _hasDebug; void _hasUnsafe;
+// These assignments will fail to compile if the types are not assignable.
+const _debugPortCheck: _AssertDebugPortAssignable = true;
+const _unsafePortCheck: _AssertUnsafePortAssignable = true;
+void _debugPortCheck; void _unsafePortCheck;
 
 // -----------------------------------------------------------------------
 // Plugin interface — only the properties we actually touch

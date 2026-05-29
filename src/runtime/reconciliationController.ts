@@ -33,7 +33,6 @@ import {
 	ORIGIN_DISK_SYNC_RECOVER_BOUND,
 	ORIGIN_DISK_SYNC_OPEN_IDLE_RECOVER,
 } from "../sync/origins";
-import { decideClosedFileConflict } from "../sync/closedFileConflict";
 import { planClosedFileReconcile } from "./reconcile/closedFilePlanner";
 import type { ClosedFileReconcileAction } from "./reconcile/closedFilePlanner";
 
@@ -89,7 +88,7 @@ interface ReconciliationControllerDeps {
 	refreshStatusBar(): void;
 	/**
 	 * Returns the Unix ms timestamp of the last successful saveDiskIndex() call.
-	 * Used by decideClosedFileConflict to detect disk edits made while YAOS
+	 * Used by planClosedFileReconcile to detect disk edits made while YAOS
 	 * was inactive (missing-baseline tie-breaking). Returns 0 if never saved.
 	 * Naming: getLastDiskIndexPersistedAt — this is the last save, not last
 	 * plugin activity; conflating them creates false certainty.
