@@ -10,6 +10,11 @@
 import type { PathAdmission } from "./pathAdmissionPolicy";
 import type { PathSyncCategory } from "../../paths/pathCategory";
 
+/**
+ * @deprecated Remove after autophagy campaign 2. No production caller remains.
+ * Only kept for test coverage of the legacy decision matrix.
+ * Removal target: next deletion pass after TraceSink second cluster.
+ */
 export type RenameAdmissionDecision =
 	| { kind: "rename"; oldPath: string; newPath: string }
 	| { kind: "tombstone-old"; oldPath: string; newPath: string; reason: string }
@@ -18,7 +23,9 @@ export type RenameAdmissionDecision =
 
 /**
  * Decide what to do with a rename given the admission status of both paths.
- * (Legacy API — use planCategoryRenameAction for new code.)
+ *
+ * @deprecated Remove after autophagy campaign 2. No production caller remains.
+ * Use planCategoryRenameAction for new code.
  */
 export function decideRenameAdmission(input: {
 	oldPath: string;
@@ -83,7 +90,9 @@ export type RenameAction =
 
 /**
  * Plan rename action from a RenameAdmissionDecision (legacy path).
- * Used by callers that still go through admitMarkdownPath + decideRenameAdmission.
+ *
+ * @deprecated Remove after autophagy campaign 2. No production caller remains.
+ * Used only by tests exercising the legacy decision matrix.
  */
 export function planRenameAction(decision: RenameAdmissionDecision): RenameAction {
 	switch (decision.kind) {
