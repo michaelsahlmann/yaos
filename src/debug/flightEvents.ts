@@ -56,10 +56,8 @@ export const FLIGHT_KIND = {
 	 * "was there a disk.delete.observed before this tombstone?"
 	 */
 	qaPhase: "qa.phase",
-	qaInvariantFailed: "qa.invariant.failed",
 	flightEventsDropped: "flight.events.dropped",
 	flightLogsRotated: "flight.logs.rotated",
-	flightLogsCleared: "flight.logs.cleared",
 	pathIdentityDegraded: "path.identity.degraded",
 	redactionFailure: "redaction.failure",
 	exportManifest: "export.manifest",
@@ -82,7 +80,6 @@ export const FLIGHT_KIND = {
 	diskEventNotSuppressed: "disk.event.not_suppressed",  // meta: suppression failed (priority: critical)
 
 	// Disk — YAOS writes
-	diskWritePlanned: "disk.write.planned",
 	diskWriteOk: "disk.write.ok",
 	diskWriteFailed: "disk.write.failed",                  // priority: critical
 
@@ -102,8 +99,6 @@ export const FLIGHT_KIND = {
 	reconcileStart: "reconcile.start",
 	reconcileFileDecision: "reconcile.file.decision",      // priority: critical when conflictRisk=ambiguous
 	reconcileSafetyBrakeTriggered: "reconcile.safety_brake.triggered", // priority: critical
-	reconcileWritebackApplied: "reconcile.writeback.applied",
-	reconcileWritebackSkipped: "reconcile.writeback.skipped",
 	reconcileComplete: "reconcile.complete",
 
 	// Recovery — all now emitted from reconciliationController

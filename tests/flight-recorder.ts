@@ -524,7 +524,6 @@ console.log("\n--- Test 14: FLIGHT_KIND taxonomy constants ---");
 	assert(FLIGHT_KIND.diskDeleteObserved === "disk.delete.observed", "disk delete observed");
 	assert(FLIGHT_KIND.diskEventSuppressed === "disk.event.suppressed", "disk event suppressed (meta, kept)");
 	assert(FLIGHT_KIND.diskEventNotSuppressed === "disk.event.not_suppressed", "disk not suppressed (critical)");
-	assert(FLIGHT_KIND.diskWritePlanned === "disk.write.planned", "disk write planned");
 	assert(FLIGHT_KIND.diskWriteOk === "disk.write.ok", "disk write ok");
 	assert(FLIGHT_KIND.diskWriteFailed === "disk.write.failed", "disk write failed");
 	assert(FLIGHT_KIND.crdtFileCreated === "crdt.file.created", "crdt file created");
