@@ -677,7 +677,10 @@ export class ReconciliationController {
 				// next startup reconcile (after plugin disable/re-enable).
 				const settledHashes = new Map<string, string>();
 
-				const updatesToFlush: string[] = [];
+				// Track paths that need CRDT→disk flush, along with the semantic reason.
+				// This preserves the action kind so planBaselineAdvancement gets the
+				// correct input, not a flattened "defer-to-crdt-flush" for everything.
+				const updatesToFlush: Array<{ path: string; baselineActionKind: BaselineActionKind }> = [];
 				for (const path of result.createdOnDisk) {
 					this.deps.recordFlightPathEvent?.({
 						priority: "important",
@@ -830,7 +833,7 @@ export class ReconciliationController {
 										settledHashes.set(path, baselineAction.hash);
 									}
 								} else {
-									updatesToFlush.push(path);
+									updatesToFlush.push({ path, baselineActionKind: "conflict-crdt-wins" });
 								}
 								this.deps.trace("conflict", "closed-file-conflict-preserved", {
 									path,
@@ -883,21 +886,20 @@ export class ReconciliationController {
 						}
 						// action.kind === "apply-remote-to-disk", "no-op", or "defer-to-crdt-flush":
 						// CRDT wins or nothing to do. Fall through to flush.
+						// Preserve the semantic action kind for baseline advancement.
+						updatesToFlush.push({ path, baselineActionKind: action.kind });
 					}
-					updatesToFlush.push(path);
 				}
-				for (const path of updatesToFlush) {
+				for (const { path, baselineActionKind } of updatesToFlush) {
 					await diskMirror.flushWrite(path);
 					flushedUpdates++;
 					// Record settled baseline hash: CRDT content was written to disk
 					const ytext = vaultSync.getTextForPath(path);
 					if (ytext) {
 						const crdtHash = await contentBaselineHash(yTextToString(ytext) ?? "");
-						// All paths in updatesToFlush are CRDT-wins scenarios:
-						// - conflict-crdt-wins, apply-remote-to-disk, no-op, defer-to-crdt-flush
-						// All advance with crdtHash. Use defer-to-crdt-flush as the generic action.
+						// Use the preserved action kind for accurate baseline advancement.
 						const baselineAction = planBaselineAdvancement({
-							actionKind: "defer-to-crdt-flush",
+							actionKind: baselineActionKind,
 							diskHash: null,
 							crdtHash,
 							previousBaselineHash: null,
