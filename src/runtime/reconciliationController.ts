@@ -36,6 +36,13 @@ import {
 import { planClosedFileReconcile } from "./reconcile/closedFilePlanner";
 import { planBaselineAdvancement, type BaselineActionKind } from "./reconcile/baselineAdvancementPolicy";
 import { evaluateSafetyBrake } from "./reconcile/safetyBrakePolicy";
+import {
+	computeRecoveryFingerprint,
+	evaluateFingerprintQuarantine,
+	findOldestFingerprintEntry,
+	FINGERPRINT_MAP_MAX_SIZE,
+	type FingerprintEntry,
+} from "./reconcile/fingerprintQuarantinePolicy";
 
 export interface ReconciliationStats {
 	at: string;
@@ -123,12 +130,6 @@ const OPEN_FILE_EXTERNAL_EDIT_IDLE_GRACE_MS = 1200;
 const OPEN_FILE_LOCAL_ONLY_RECOVERY_IDLE_MS = 3000;
 const BOUND_RECOVERY_LOCK_MS = 1500;
 const TRACE_PATH_SAMPLE_LIMIT = 50;
-const MAX_REPEATED_RECOVERY_FINGERPRINTS = 3;
-const MAX_RECOVERY_FINGERPRINT_MAP_SIZE = 200;
-/** Time-to-live for recovery fingerprint counts. If the same fingerprint
- *  recurs after this window, the count resets to 1 — preventing stale
- *  attempts from hours ago from poisoning future legitimate edits. */
-const RECOVERY_FINGERPRINT_TTL_MS = 10 * 60_000; // 10 minutes
 
 /**
  * Monotonic-growth amplification quarantine.
@@ -148,13 +149,6 @@ interface AmplificationEntry {
 	at: number;
 }
 
-/**
- * Cheap FNV-1a-ish 32-bit hash for content fingerprinting.
- * @see diskIndex.contentFingerprint — exported from there, imported above.
- */
-function recoverySignature(reason: string, previousContent: string, nextContent: string): string {
-	return `${reason}\x00${contentFingerprint(previousContent)}\x00${contentFingerprint(nextContent)}`;
-}
 
 function tracePathList(prefix: string, paths: string[]): Record<string, unknown> {
 	return {
@@ -289,7 +283,7 @@ export class ReconciliationController {
 	private markdownDrainTimer: ReturnType<typeof setTimeout> | null = null;
 	private lastMarkdownDirtyAt = 0;
 	private boundRecoveryLocks = new Map<string, number>();
-	private recoveryFingerprints = new Map<string, { fingerprint: string; count: number; lastAt: number }>();
+	private recoveryFingerprints = new Map<string, FingerprintEntry>();
 	/**
 	 * Per-path amplification history for the monotonic-growth quarantine.
 	 * Independent of `recoveryFingerprints` — fingerprint quarantine catches
@@ -1704,7 +1698,7 @@ export class ReconciliationController {
 				path: file.path,
 				data: {
 					reason: "bound-file-local-only-divergence",
-					signature: recoverySignature("bound-file-local-only-divergence", crdtContent ?? "", content),
+					signature: computeRecoveryFingerprint("bound-file-local-only-divergence", crdtContent ?? "", content),
 					action: "apply-diff",
 					diskLength: content.length,
 					crdtLength: crdtContent?.length ?? null,
@@ -1816,7 +1810,7 @@ export class ReconciliationController {
 					path: file.path,
 					data: {
 						reason: "bound-file-local-only-seed",
-						signature: recoverySignature("bound-file-local-only-seed", "", content),
+						signature: computeRecoveryFingerprint("bound-file-local-only-seed", "", content),
 						action: "seed-crdt-from-disk",
 						diskLength: content.length,
 						...(_rsh2 ? { recoveryStateHash: _rsh2 } : {}),
@@ -1970,7 +1964,7 @@ export class ReconciliationController {
 				path: file.path,
 				data: {
 					reason: "bound-file-open-idle-disk-recovery",
-					signature: recoverySignature("bound-file-open-idle-disk-recovery", crdtContent ?? "", content),
+					signature: computeRecoveryFingerprint("bound-file-open-idle-disk-recovery", crdtContent ?? "", content),
 					action: "apply-diff",
 					diskLength: content.length,
 					crdtLength: crdtContent?.length ?? null,
@@ -2063,7 +2057,7 @@ export class ReconciliationController {
 					path: file.path,
 					data: {
 						reason: "bound-file-open-idle-seed",
-						signature: recoverySignature("bound-file-open-idle-seed", "", content),
+						signature: computeRecoveryFingerprint("bound-file-open-idle-seed", "", content),
 						action: "seed-crdt-from-disk",
 						diskLength: content.length,
 						...(_rsh4 ? { recoveryStateHash: _rsh4 } : {}),
@@ -2278,32 +2272,29 @@ export class ReconciliationController {
 		previousContent: string,
 		nextContent: string,
 	): boolean {
-		const fingerprint = recoverySignature(reason, previousContent, nextContent);
+		const fingerprint = computeRecoveryFingerprint(reason, previousContent, nextContent);
 		const now = Date.now();
 		const previous = this.recoveryFingerprints.get(path);
-		// Same fingerprint within the TTL window → increment.
-		// Same fingerprint beyond the TTL → treat as fresh (count = 1).
-		// Different fingerprint → always reset.
-		const sameFingerprint = previous?.fingerprint === fingerprint;
-		const withinTtl = sameFingerprint && (now - (previous?.lastAt ?? 0)) < RECOVERY_FINGERPRINT_TTL_MS;
-		const count = withinTtl ? previous!.count + 1 : 1;
-		this.recoveryFingerprints.set(path, { fingerprint, count, lastAt: now });
 
-		// Cap map size: evict oldest entries when exceeded
-		if (this.recoveryFingerprints.size > MAX_RECOVERY_FINGERPRINT_MAP_SIZE) {
-			let oldestPath: string | null = null;
-			let oldestAt = Infinity;
-			for (const [p, entry] of this.recoveryFingerprints) {
-				if (entry.lastAt < oldestAt) {
-					oldestAt = entry.lastAt;
-					oldestPath = p;
-				}
-			}
+		// Evaluate using pure policy function.
+		const decision = evaluateFingerprintQuarantine({
+			fingerprint,
+			now,
+			previous,
+		});
+
+		// Update state (side effect kept in controller).
+		this.recoveryFingerprints.set(path, decision.newEntry);
+
+		// Cap map size: evict oldest entries when exceeded.
+		if (this.recoveryFingerprints.size > FINGERPRINT_MAP_MAX_SIZE) {
+			const oldestPath = findOldestFingerprintEntry(this.recoveryFingerprints);
 			if (oldestPath) this.recoveryFingerprints.delete(oldestPath);
 		}
 
-		if (count < MAX_REPEATED_RECOVERY_FINGERPRINTS) return false;
+		if (!decision.quarantined) return false;
 
+		const count = decision.newEntry.count;
 		this.deps.trace("recovery", "recovery-quarantined", {
 			path,
 			reason,
@@ -2387,7 +2378,7 @@ export class ReconciliationController {
 
 		// Cap global map size — share the same limit as recoveryFingerprints
 		// so a single tunable governs both detectors' memory footprint.
-		if (this.amplificationHistory.size > MAX_RECOVERY_FINGERPRINT_MAP_SIZE) {
+		if (this.amplificationHistory.size > FINGERPRINT_MAP_MAX_SIZE) {
 			let oldestPath: string | null = null;
 			let oldestAt = Infinity;
 			for (const [p, entries] of this.amplificationHistory) {
