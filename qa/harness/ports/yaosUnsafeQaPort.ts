@@ -27,14 +27,15 @@ export interface YaosUnsafeQaPort {
 		opts: { originClass: "local" | "remote"; createIfMissing?: boolean },
 	): Promise<{ beforeHash: string | null; afterHash: string | null; fileExisted: boolean }>;
 
-	__qaOnlyForceSyncFileFromDiskUnsafe(
+	// --- Disk ingest control ---
+	ingestDiskFileNow(
 		path: string,
 		reason?: "create" | "modify",
 	): Promise<void>;
 
 	// --- Editor binding control ---
-	__qaOnlyPauseEditorBindingPropagationUnsafe(path: string): Promise<boolean>;
-	__qaOnlyResumeEditorBindingPropagationUnsafe(path: string): Promise<boolean>;
+	pauseEditorPropagation(path: string): Promise<boolean>;
+	resumeEditorPropagation(path: string): Promise<boolean>;
 
 	// --- Network control ---
 	setQaNetworkHold(mode: "offline" | "online"): void;
@@ -49,7 +50,7 @@ export interface YaosUnsafeQaPort {
 	__qaOnlyTriggerWitnessDirtyUnsafe?(path: string): void;
 
 	// --- Policy override ---
-	__qaOnlySetExternalEditPolicyOverrideUnsafe(
+	setExternalEditPolicyOverride(
 		policy: "always" | "closed-only" | "never" | null,
 	): Promise<{ previous: "always" | "closed-only" | "never" }>;
 

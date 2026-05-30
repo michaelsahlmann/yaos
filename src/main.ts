@@ -83,6 +83,8 @@ import { ConfirmModal } from "./ui/ConfirmModal";
 import { runSchemaMigrationToV2 } from "./migrations/schemaV2";
 import { isLocalOrigin } from "./sync/origins";
 import type { TelemetryRuntimeHandle } from "./telemetry/installTelemetryRuntime";
+import type { EngineControlPort, DiskIngestPort } from "./runtime/engineControlPort";
+import type { BindingPropagationGate } from "./sync/editorBinding";
 
 type PersistedPluginState = Partial<VaultSyncSettings> & {
 	_diskIndex?: DiskIndex;
@@ -124,6 +126,49 @@ export default class VaultCrdtSyncPlugin extends Plugin {
 	private traceRuntime: TraceRuntimeController | null = null;
 	/** Telemetry runtime handle — null until dynamically loaded. */
 	private lab: TelemetryRuntimeHandle | null = null;
+
+	// ---------------------------------------------------------------------------
+	// Private Engine control state — QA harness only.
+	// All null in normal production sessions. Populated only when qaDebugMode is
+	// active and the Puppeteer harness calls getEngineControlPort().
+	// ---------------------------------------------------------------------------
+	/** Stored by createReconciliationController when controller fires registerDiskIngestPort. */
+	private diskIngestPort: DiskIngestPort | null = null;
+	/** Transient external edit policy override. Never persisted. */
+	private externalEditPolicyOverride: import("./settings").ExternalEditPolicy | null = null;
+	/** Set of editor paths with propagation currently paused by the harness. */
+	private pausedEditorPropagationPaths = new Set<string>();
+	/** Reconfigure hook registered by EditorBindingManager for gate actions. */
+	private bindingReconfigureHook: ((path: string, deviceName: string, action: "pause" | "resume") => void) | null = null;
+
+	/**
+	 * Assembled Engine control port — used only by the QA/Puppeteer harness.
+	 * Not exposed through telemetry, not mounted on window, not a product command.
+	 * Wired into qaDebugApi.ts via PluginHandle.getEngineControlPort().
+	 */
+	private readonly engineControlPort: EngineControlPort = {
+		ingestDiskFileNow: async (path, reason = "modify") => {
+			if (!this.diskIngestPort) throw new Error("DiskIngestPort not registered (reconciliation controller not started?)");
+			await this.diskIngestPort.ingestDiskFileNow(path, reason);
+		},
+		pauseEditorPropagation: (path) => {
+			if (this.pausedEditorPropagationPaths.has(path)) return false;
+			this.pausedEditorPropagationPaths.add(path);
+			this.bindingReconfigureHook?.(path, this.settings.deviceName, "pause");
+			return true;
+		},
+		resumeEditorPropagation: (path) => {
+			if (!this.pausedEditorPropagationPaths.has(path)) return false;
+			this.pausedEditorPropagationPaths.delete(path);
+			this.bindingReconfigureHook?.(path, this.settings.deviceName, "resume");
+			return true;
+		},
+		setExternalEditPolicyOverride: (policy) => {
+			const previous = this.externalEditPolicyOverride ?? this.getRuntimeConfig().externalEditPolicy;
+			this.externalEditPolicyOverride = policy;
+			return previous;
+		},
+	};
 	/** Domain-level trace sink. Routes to lab when active, noop otherwise. */
 	private traceSink: TraceSink = new NoopTraceSink();
 	private statusBarEl: HTMLElement | null = null;
@@ -207,6 +252,11 @@ export default class VaultCrdtSyncPlugin extends Plugin {
 			recordFlightPathEvent: (event) => this.recordFlightPathEvent(event),
 			computeRecoveryStateHash: async (_path, content) => {
 				return this.lab?.computeWitnessStateHash(content) ?? null;
+			},
+			getEffectiveExternalEditPolicy: (runtimePolicy) =>
+				this.externalEditPolicyOverride ?? runtimePolicy,
+			registerDiskIngestPort: (port) => {
+				this.diskIngestPort = port;
 			},
 		});
 		return this.reconciliationController;
@@ -536,11 +586,18 @@ export default class VaultCrdtSyncPlugin extends Plugin {
 			});
 
 			// 2. EditorBindingManager
+			const bindingPropagationGate: BindingPropagationGate = {
+				isPaused: (path) => this.pausedEditorPropagationPaths.has(path),
+				registerReconfigureHook: (fn) => {
+					this.bindingReconfigureHook = fn;
+				},
+			};
 			this.editorBindings = new EditorBindingManager(
 				this.vaultSync,
 				this.settings.debug,
 				(source, msg, details) => this.trace(source, msg, details),
 				(event) => this.recordFlightPathEvent(event),
+				bindingPropagationGate,
 			);
 
 			// 3. Global CM6 extension
@@ -2004,6 +2061,15 @@ export default class VaultCrdtSyncPlugin extends Plugin {
 		// so developers know what happened instead of silently finding no API.
 		this.log("qaDebugMode enabled, but window.__YAOS_DEBUG__ is not mounted by this build. Load the Puppeteer harness from qa/harness/ to get the QA debug API.");
 		new Notice("YAOS: qaDebugMode active — QA debug API not available in this build. See qa/harness/.", 8000);
+	}
+
+	/**
+	 * Returns the private Engine control port for the Puppeteer QA harness.
+	 * Not a product feature. Not exposed through telemetry or commands.
+	 * Called only by qa/harness/installPuppeteerRuntime.ts via duck-typing.
+	 */
+	getEngineControlPort(): EngineControlPort {
+		return this.engineControlPort;
 	}
 
 	private async exportFlightTraceForApi(privacy: "safe" | "full"): Promise<string | null> {

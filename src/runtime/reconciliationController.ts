@@ -77,6 +77,8 @@ export interface ReconciliationState {
 	blockedDivergenceSample: Array<{ ext: string; hash: string }>;
 }
 
+import { type DiskIngestPort } from "./engineControlPort";
+
 interface ReconciliationControllerDeps {
 	app: App;
 	getSettings(): VaultSyncSettings;
@@ -120,6 +122,23 @@ interface ReconciliationControllerDeps {
 	 * Returns null if no trace is active or hash computation fails.
 	 */
 	computeRecoveryStateHash?(path: string, content: string): Promise<string | null>;
+	/**
+	 * Optional: override the external edit policy used inside syncFileFromDisk.
+	 * Absent in production. Supplied by the QA harness to set a transient
+	 * in-memory override without persisting or pushing settings metadata.
+	 * When present, this callback is called with the runtime policy and may
+	 * return a different value; returning null/undefined falls back to the
+	 * runtime policy.
+	 */
+	getEffectiveExternalEditPolicy?(runtimePolicy: import("../settings").ExternalEditPolicy): import("../settings").ExternalEditPolicy | null | undefined;
+	/**
+	 * Optional: harness registration hook for disk-ingest control.
+	 * Called once during reconciliation setup. The callback receives a
+	 * control port that the QA harness can store and call to trigger
+	 * syncFileFromDisk deterministically, bypassing the dirty-queue pipeline.
+	 * Must not be wired in production main.ts.
+	 */
+	registerDiskIngestPort?(port: DiskIngestPort): void;
 }
 
 const RECONCILE_COOLDOWN_MS = 10_000;
@@ -282,8 +301,6 @@ export class ReconciliationController {
 	 * .kiro/specs/editor-bound-localonly-amplifier-guard/requirements.md R3.
 	 */
 	private amplificationHistory = new Map<string, AmplificationEntry[]>();
-	/** QA-ONLY: in-memory external edit policy override. Never persisted. */
-	private __qaExternalEditPolicyOverride: import("../settings").ExternalEditPolicy | null = null;
 	private lastConflictFingerprints = new Map<string, string>();
 	private blockedDivergenceCount = 0;
 	private lastBlockedDivergenceAt: string | null = null;
@@ -299,7 +316,19 @@ export class ReconciliationController {
 	private amplificationNoticeSuppressionCount = 0;
 	private static readonly AMPLIFICATION_NOTICE_COOLDOWN_MS = 60_000;
 
-	constructor(private readonly deps: ReconciliationControllerDeps) {}
+	constructor(private readonly deps: ReconciliationControllerDeps) {
+		// If a QA harness is attached, register the disk-ingest control port now.
+		// In normal production, registerDiskIngestHarnessPort is absent.
+		deps.registerDiskIngestPort?.({
+			ingestDiskFileNow: async (path, reason) => {
+				const abstractFile = this.deps.app.vault.getAbstractFileByPath(path);
+				if (!(abstractFile instanceof TFile)) {
+					throw new Error(`ingestDiskFileNow: not a file: ${path}`);
+				}
+				await this.syncFileFromDisk(abstractFile, reason);
+			},
+		});
+	}
 
 	get isReconciled(): boolean {
 		return this.reconciled;
@@ -1316,7 +1345,9 @@ export class ReconciliationController {
 			wasBound = false;
 		}
 
-		const effectivePolicy = this.__qaExternalEditPolicyOverride ?? runtimeConfig.externalEditPolicy;
+		const effectivePolicy =
+			this.deps.getEffectiveExternalEditPolicy?.(runtimeConfig.externalEditPolicy)
+			?? runtimeConfig.externalEditPolicy;
 		const policyDecision = decideExternalEditImport(effectivePolicy, isOpenInEditor);
 		if (!policyDecision.allowImport) {
 			const reason = policyDecision.reason === "policy-never"
@@ -1435,49 +1466,6 @@ export class ReconciliationController {
 		} catch (err) {
 			console.error(`[yaos] syncFileFromDisk failed for "${file.path}":`, err);
 		}
-	}
-
-	/**
-	 * QA-ONLY. Unsafe. Do not call from production code.
-	 *
-	 * Forces a disk→CRDT sync pass for a single path, deterministically
-	 * exercising editor-bound recovery paths without waiting for a real
-	 * filesystem event. Used only in forced-recovery regression scenarios.
-	 */
-	async __qaOnlyForceSyncFileFromDiskUnsafe(path: string, reason: "create" | "modify" = "modify"): Promise<void> {
-		const abstractFile = this.deps.app.vault.getAbstractFileByPath(path);
-		if (!(abstractFile instanceof TFile)) {
-			throw new Error(`__qaOnlyForceSyncFileFromDiskUnsafe: not a file: ${path}`);
-		}
-		await this.syncFileFromDisk(abstractFile, reason);
-	}
-
-	/** QA-ONLY. Unsafe. Pause editor->CRDT propagation while keeping bound state. */
-	__qaOnlyPauseEditorBindingPropagationUnsafe(path: string): boolean {
-		return this.deps.getEditorBindings()?.__qaOnlyPauseBindingPropagationUnsafe(path) ?? false;
-	}
-
-	/** QA-ONLY. Unsafe. Resume editor->CRDT propagation after a pause. */
-	__qaOnlyResumeEditorBindingPropagationUnsafe(path: string): boolean {
-		return this.deps.getEditorBindings()?.__qaOnlyResumeBindingPropagationUnsafe(
-			path,
-			this.deps.getSettings().deviceName,
-		) ?? false;
-	}
-
-	/**
-	 * QA-ONLY. Unsafe. Sets an in-memory-only override for the external edit policy.
-	 * Does NOT persist, does NOT push update metadata, does NOT dirty settings.
-	 * Returns the previous effective policy (override or real setting).
-	 * Pass null to clear the override.
-	 */
-	__qaOnlySetExternalEditPolicyOverrideUnsafe(
-		policy: import("../settings").ExternalEditPolicy | null,
-	): import("../settings").ExternalEditPolicy {
-		const previous = this.__qaExternalEditPolicyOverride
-			?? this.deps.getRuntimeConfig().externalEditPolicy;
-		this.__qaExternalEditPolicyOverride = policy;
-		return previous;
 	}
 
 	private getOpenMarkdownViewsForPath(path: string): MarkdownView[] {

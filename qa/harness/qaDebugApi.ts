@@ -338,6 +338,8 @@ interface PluginHandle {
 	getScenarioController?(): import("./scenarioStateController").ScenarioStateController | null;
 	/** SHA-256 hash of the active qaTraceSecret, computed at trace start. */
 	getQaTraceSecretHash?(): string | null;
+	/** Engine control port — present when Puppeteer harness is active. */
+	getEngineControlPort(): import("../../src/runtime/engineControlPort").EngineControlPort;
 }
 
 // -----------------------------------------------------------------------
@@ -691,20 +693,19 @@ export function buildQaDebugApi(plugin: PluginHandle): YaosQaDebugApi {
 			plugin.getConnectionController()?.reconnect("qa-force-reconnect");
 		},
 
-		async __qaOnlyForceSyncFileFromDiskUnsafe(path: string, reason: "create" | "modify" = "modify"): Promise<void> {
-			await plugin.getReconciliationController().__qaOnlyForceSyncFileFromDiskUnsafe(path, reason);
+		async ingestDiskFileNow(path: string, reason: "create" | "modify" = "modify"): Promise<void> {
+			await plugin.getEngineControlPort().ingestDiskFileNow(path, reason);
 		},
-		async __qaOnlyPauseEditorBindingPropagationUnsafe(path: string): Promise<boolean> {
-			return plugin.getReconciliationController().__qaOnlyPauseEditorBindingPropagationUnsafe(path);
+		async pauseEditorPropagation(path: string): Promise<boolean> {
+			return plugin.getEngineControlPort().pauseEditorPropagation(path);
 		},
-		async __qaOnlyResumeEditorBindingPropagationUnsafe(path: string): Promise<boolean> {
-			return plugin.getReconciliationController().__qaOnlyResumeEditorBindingPropagationUnsafe(path);
+		async resumeEditorPropagation(path: string): Promise<boolean> {
+			return plugin.getEngineControlPort().resumeEditorPropagation(path);
 		},
-		async __qaOnlySetExternalEditPolicyOverrideUnsafe(
+		async setExternalEditPolicyOverride(
 			policy: "always" | "closed-only" | "never" | null,
 		): Promise<{ previous: "always" | "closed-only" | "never" }> {
-			// In-memory only — no persist, no settings save, no metadata push.
-			const previous = plugin.getReconciliationController().__qaOnlySetExternalEditPolicyOverrideUnsafe(policy);
+			const previous = plugin.getEngineControlPort().setExternalEditPolicyOverride(policy);
 			return { previous };
 		},
 		async __qaOnlyEmitPhaseUnsafe(phase: "setup" | "run" | "assert" | "cleanup"): Promise<void> {

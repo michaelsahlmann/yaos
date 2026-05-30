@@ -1,10 +1,3 @@
-/**
- * LabRuntimeHost — minimal interface that main.ts exposes to the lab runtime.
- *
- * Lab code accesses product state exclusively through this interface.
- * Product code never imports lab modules directly.
- */
-
 import type { App } from "obsidian";
 import type { VaultSync } from "../sync/vaultSync";
 import type { ReconciliationController } from "../runtime/reconciliationController";
@@ -13,6 +6,7 @@ import type { EditorBindingManager } from "../sync/editorBinding";
 import type { VaultSyncSettings } from "../settings";
 import type { TraceSink } from "../observability/traceSink";
 import type { TraceHttpContext } from "../observability/traceContext";
+import type { EngineControlPort } from "../runtime/engineControlPort";
 
 export interface LabRuntimeHost {
 	readonly app: App;
@@ -33,4 +27,10 @@ export interface LabRuntimeHost {
 	/** Register a cleanup to run on plugin unload. */
 	registerCleanup(cleanup: () => void): void;
 	log(msg: string): void;
+	/**
+	 * Engine control port — available only when qaDebugMode is active.
+	 * Absent in normal production. Not part of telemetry host.
+	 * The Puppeteer harness calls this to drive Engine internals.
+	 */
+	getEngineControlPort(): EngineControlPort;
 }

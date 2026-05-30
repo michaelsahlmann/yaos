@@ -494,6 +494,7 @@ export async function installLabRuntime(host: LabRuntimeHost): Promise<LabRuntim
 			getDeviceWitnessTracker: () => deviceWitnessTracker,
 			getScenarioController: () => scenarioController,
 			getQaTraceSecretHash: () => _qaTraceSecretHash,
+			getEngineControlPort: () => host.getEngineControlPort(),
 		});
 		host.onLabApiMounted(api);
 		host.log("QA debug API mounted at window.__YAOS_DEBUG__");

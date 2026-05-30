@@ -108,7 +108,7 @@ export const s06aIssue25ForcedRecoveryCrdtOnly: QaScenario = {
 		// Clear the editor-bound "disk lag" guard (1200ms) so the forced sync
 		// can't be skipped due to recent editor activity.
 		await ctx.sleep(1500);
-		await ctx.yaos.__qaOnlyForceSyncFileFromDiskUnsafe(path, "modify");
+		await ctx.yaos.ingestDiskFileNow(path, "modify");
 
 		// 6. Wait for recovery to settle. The vault event → syncFileFromDisk
 		//    → recovery path runs synchronously within the event handler.
@@ -209,11 +209,11 @@ export const s06aIssue25ForcedRecoveryLocalOnly: QaScenario = {
 		//
 		// We do this by pausing editor->CRDT propagation while keeping the path
 		// tracked as bound, then editing the editor and letting Obsidian auto-save.
-		paused = await ctx.yaos.__qaOnlyPauseEditorBindingPropagationUnsafe(path);
+		paused = await ctx.yaos.pauseEditorPropagation(path);
 		if (!paused) {
 			throw new Error("Issue-25 (forced-localOnly): failed to pause binding propagation (path not bound?)");
 		}
-		const policyChange = await ctx.yaos.__qaOnlySetExternalEditPolicyOverrideUnsafe("never");
+		const policyChange = await ctx.yaos.setExternalEditPolicyOverride("never");
 		previousExternalPolicy = policyChange.previous;
 		const divergent = fixture.replace(
 			ISSUE_25_TASKS_ANCHOR_1,
@@ -241,7 +241,7 @@ export const s06aIssue25ForcedRecoveryLocalOnly: QaScenario = {
 		}
 
 		// Re-enable normal import policy before running the forced sync pass.
-		await ctx.yaos.__qaOnlySetExternalEditPolicyOverrideUnsafe(previousExternalPolicy);
+		await ctx.yaos.setExternalEditPolicyOverride(previousExternalPolicy);
 		policyRestored = true;
 		console.log("[S06a-localOnly] precondition OK", {
 			diskAfterEdit,
@@ -250,7 +250,7 @@ export const s06aIssue25ForcedRecoveryLocalOnly: QaScenario = {
 		});
 
 		// 6. Trigger localOnly recovery.
-		await ctx.yaos.__qaOnlyForceSyncFileFromDiskUnsafe(path, "modify");
+		await ctx.yaos.ingestDiskFileNow(path, "modify");
 		await ctx.waitForIdle(15000);
 
 		// 7. POSTCONDITION: all three must converge to disk/editor.
@@ -273,17 +273,17 @@ export const s06aIssue25ForcedRecoveryLocalOnly: QaScenario = {
 			);
 		}
 
-		await ctx.yaos.__qaOnlyResumeEditorBindingPropagationUnsafe(path);
+		await ctx.yaos.resumeEditorPropagation(path);
 		paused = false;
 
 		await ctx.closeFile(path);
 		await ctx.deleteFile(path);
 		} finally {
 			if (!policyRestored && previousExternalPolicy) {
-				await ctx.yaos.__qaOnlySetExternalEditPolicyOverrideUnsafe(previousExternalPolicy);
+				await ctx.yaos.setExternalEditPolicyOverride(previousExternalPolicy);
 			}
 			if (paused) {
-				await ctx.yaos.__qaOnlyResumeEditorBindingPropagationUnsafe(path);
+				await ctx.yaos.resumeEditorPropagation(path);
 			}
 		}
 	},

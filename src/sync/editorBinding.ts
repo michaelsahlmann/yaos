@@ -44,8 +44,6 @@ interface EditorBinding {
 	lastBoundAtMs: number;
 	lastEditorChangeAtMs: number;
 	settleWindowMs: number;
-	/** QA-only: when true, suppress binding health/heal work. */
-	qaPaused?: boolean;
 }
 
 export interface BindingDebugInfo {
@@ -91,6 +89,30 @@ interface BindingTarget {
 	fileId?: string;
 }
 
+/**
+ * Harness-only gate for pausing editor<->CRDT propagation on specific paths.
+ * Supplied by the QA harness via the EditorBindingManager constructor.
+ * Absent in production. Default: all paths are unpaused.
+ *
+ * The gate owns the mutable paused-path set. The EditorBindingManager
+ * only reads from it (isPaused) — it does not mutate it.
+ *
+ * The harness must call reconfigureBindingForPath after mutating the set
+ * so that the CodeMirror compartment is updated.
+ */
+export interface BindingPropagationGate {
+	/** Returns true if propagation for this path is currently paused. */
+	isPaused(path: string): boolean;
+	/**
+	 * Called by EditorBindingManager to expose a reconfigure hook for
+	 * the harness. The harness calls reconfigure(path, deviceName) after
+	 * pausing or resuming to apply the CM extension change.
+	 */
+	registerReconfigureHook(
+		fn: (path: string, deviceName: string, action: "pause" | "resume") => void,
+	): void;
+}
+
 export class EditorBindingManager {
 	/** The CM6 compartment that holds yCollab for each editor. */
 	readonly compartment = new Compartment();
@@ -115,8 +137,27 @@ export class EditorBindingManager {
 		debug: boolean,
 		private trace?: TraceRecord,
 		private recordFlightPathEvent?: (event: ProductFlightPathEventInput) => void,
+		private readonly bindingPropagationGate?: BindingPropagationGate,
 	) {
 		this.debug = debug;
+		// Register the reconfigure hook so the harness can trigger CM extension
+		// changes after mutating the paused-path set.
+		bindingPropagationGate?.registerReconfigureHook((path, deviceName, action) => {
+			for (const [leafId, binding] of this.bindings) {
+				if (binding.path !== path) continue;
+				if (action === "pause") {
+					try {
+						binding.cm.dispatch({ effects: this.compartment.reconfigure([]) });
+					} catch {
+						// view may be destroyed
+					}
+				} else {
+					// Resume: re-apply yCollab via repair.
+					this.repair(binding.view, deviceName, "harness-resume-binding-propagation");
+				}
+				void leafId;
+			}
+		});
 	}
 
 	/**
@@ -732,8 +773,8 @@ export class EditorBindingManager {
 		view: MarkdownView,
 		binding: EditorBinding,
 	): BindingHealthCheck {
-		if (binding.qaPaused) {
-			// QA-only: treat as healthy so we don't auto-heal/rebind mid-scenario.
+		if (this.bindingPropagationGate?.isPaused(binding.path)) {
+			// Harness gate: treat as healthy so we don't auto-heal/rebind mid-scenario.
 			return { healthy: true, settling: false, issues: [], deferredIssues: [] };
 		}
 		const issues: string[] = [];
@@ -798,7 +839,7 @@ export class EditorBindingManager {
 	): void {
 		if (this.healthWorkInFlight.has(leafId)) return;
 		if (this.bindings.get(leafId) !== binding) return;
-		if (binding.qaPaused) return;
+		if (this.bindingPropagationGate?.isPaused(binding.path)) return;
 
 		const health = this.inspectBindingHealth(binding.view, binding);
 		if (health.healthy || health.settling) return;
@@ -879,48 +920,6 @@ export class EditorBindingManager {
 		} finally {
 			this.healthWorkInFlight.delete(leafId);
 		}
-	}
-
-	/**
-	 * QA-ONLY. Unsafe.
-	 *
-	 * Pauses editor<->CRDT propagation for an *already bound* path while keeping
-	 * the binding tracked as "bound". This is used to manufacture local-only
-	 * divergence states for branch-contract tests.
-	 */
-	__qaOnlyPauseBindingPropagationUnsafe(path: string): boolean {
-		let paused = false;
-		for (const binding of this.bindings.values()) {
-			if (binding.path !== path) continue;
-			binding.qaPaused = true;
-			paused = true;
-			try {
-				binding.cm.dispatch({
-					effects: this.compartment.reconfigure([]),
-				});
-			} catch {
-				// view may be destroyed
-			}
-		}
-		return paused;
-	}
-
-	/**
-	 * QA-ONLY. Unsafe.
-	 *
-	 * Resumes editor<->CRDT propagation for a previously paused bound path.
-	 */
-	__qaOnlyResumeBindingPropagationUnsafe(path: string, deviceName: string): boolean {
-		let resumed = false;
-		for (const binding of this.bindings.values()) {
-			if (binding.path !== path) continue;
-			if (!binding.qaPaused) continue;
-			binding.qaPaused = false;
-			resumed = true;
-			// Repair will reapply yCollab via compartment reconfigure.
-			this.repair(binding.view, deviceName, "qa-resume-binding-propagation");
-		}
-		return resumed;
 	}
 
 	private scheduleCmResolveRetry(
