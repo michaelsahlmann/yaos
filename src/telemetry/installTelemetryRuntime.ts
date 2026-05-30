@@ -22,13 +22,13 @@
 import type { App, MarkdownView, Plugin } from "obsidian";
 import { Notice } from "obsidian";
 import type { TelemetryRuntimeHost } from "./telemetryRuntimeHost";
-import { FlightTraceController } from "../lab/debug/flightTraceController";
-import { FlightTraceSink } from "../lab/debug/flightTraceSink";
-import { DeviceWitnessTracker } from "../lab/diagnostics/deviceWitnessTracker";
-import { DiagnosticsService } from "../lab/diagnostics/diagnosticsService";
-import type { FlightMode, FlightPathEventInput, FlightEventInput } from "../lab/debug/flightEvents";
+import { FlightTraceController } from "./debug/flightTraceController";
+import { FlightTraceSink } from "./debug/flightTraceSink";
+import { DeviceWitnessTracker } from "./diagnostics/deviceWitnessTracker";
+import { DiagnosticsService } from "./diagnostics/diagnosticsService";
+import type { FlightMode, FlightPathEventInput, FlightEventInput } from "./debug/flightEvents";
 import type { ProductFlightPathEventInput } from "../observability/traceSink";
-import { PersistentTraceLogger } from "../lab/debug/trace";
+import { PersistentTraceLogger } from "./debug/trace";
 import type { TraceLoggerPort, TraceLoggerConfig } from "../observability/traceLogger";
 
 /**
@@ -79,7 +79,7 @@ export interface TelemetryRuntimeHandle {
 	getQaTraceSecretHash(): string | null;
 
 	// Diagnostics — typed as unknown to avoid nominal type mismatch between
-	// src/lab/diagnostics/diagnosticsService and src/diagnostics/diagnosticsService.
+	// src/telemetry/diagnostics/diagnosticsService and src/diagnostics/diagnosticsService.
 	// They are structurally identical; call sites cast as needed.
 	readonly diagnosticsService: unknown;
 
@@ -445,7 +445,6 @@ export async function installTelemetryRuntime(host: TelemetryRuntimeHost): Promi
 	function dispose(): void {
 		void flightTrace?.stop();   // flush/stop flight trace on unload (fire-and-forget)
 		_stopDeviceWitnessTracker();
-		host.onTelemetryApiUnmounted();
 	}
 
 	// -----------------------------------------------------------------------

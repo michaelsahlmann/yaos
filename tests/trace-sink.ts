@@ -9,9 +9,9 @@
  * - recordPath is non-blocking (no Promise returned to caller)
  */
 
-import { FlightTraceSink } from "../src/lab/debug/flightTraceSink";
+import { FlightTraceSink } from "../src/telemetry/debug/flightTraceSink";
 import { NoopTraceSink } from "../src/observability/noopTraceSink";
-import { FLIGHT_KIND } from "../src/lab/debug/flightEvents";
+import { FLIGHT_KIND } from "../src/telemetry/debug/flightEvents";
 import type { DomainPathTraceEvent } from "../src/observability/traceSink";
 
 let passed = 0;

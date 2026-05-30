@@ -233,7 +233,7 @@ export default class VaultCrdtSyncPlugin extends Plugin {
 			trace: (source, msg, details) => this.trace(source, msg, details),
 			scheduleTraceStateSnapshot: (reason) => this.scheduleTraceStateSnapshot(reason),
 			log: (message) => this.log(message),
-			recordFlightEvent: (event) => this.recordFlightEvent(event as import("./lab/debug/flightEvents").FlightEventInput),
+			recordFlightEvent: (event) => this.recordFlightEvent(event as import("./telemetry/debug/flightEvents").FlightEventInput),
 			recordFlightPathEvent: (event) => this.recordFlightPathEvent(event),
 			computeRecoveryStateHash: async (_path, content) => {
 				return this.lab?.computeWitnessStateHash(content) ?? null;
@@ -439,13 +439,6 @@ export default class VaultCrdtSyncPlugin extends Plugin {
 				sha256Hex: (text) => this.sha256Hex(text),
 				getPluginVersion: () => this.manifest.version,
 				isMarkdownPathSyncable: (path) => this.isMarkdownPathSyncable(path),
-				onTelemetryApiMounted: (api) => {
-					(window as unknown as Record<string, unknown>).__YAOS_DEBUG__ = api;
-				},
-				onTelemetryApiUnmounted: () => {
-					const win = window as unknown as Record<string, unknown>;
-					delete win.__YAOS_DEBUG__;
-				},
 				registerCleanup: (cleanup) => this.register(cleanup),
 				log: (msg) => this.log(msg),
 			});
@@ -562,7 +555,7 @@ export default class VaultCrdtSyncPlugin extends Plugin {
 			this.vaultSync = new VaultSync(this.settings, {
 				traceContext: this.getTraceHttpContext(),
 				trace: (source, msg, details) => this.trace(source, msg, details),
-				onFlightEvent: (event) => this.recordFlightEvent(event as import("./lab/debug/flightEvents").FlightEventInput),
+				onFlightEvent: (event) => this.recordFlightEvent(event as import("./telemetry/debug/flightEvents").FlightEventInput),
 				onFlightPathEvent: (event) => this.recordFlightPathEvent(event),
 			getSocketTicket: (() => {
 				// Each VaultSync instance gets its own ticket cache.  The cache
@@ -673,7 +666,7 @@ export default class VaultCrdtSyncPlugin extends Plugin {
 				() => this.persistPreservedUnresolvedState(),
 			);
 			this.diskMirror.startMapObservers();
-			this.diskMirror.setFlightEventHandler((event) => this.recordFlightPathEvent(event as import("./lab/debug/flightEvents").FlightPathEventInput));
+			this.diskMirror.setFlightEventHandler((event) => this.recordFlightPathEvent(event as import("./telemetry/debug/flightEvents").FlightPathEventInput));
 			// Track SHA-256 baseline hash after every successful flushWrite.
 			// Used by decideClosedFileConflict on startup/re-enable to determine
 			// which side actually changed from the last known stable state.
@@ -793,7 +786,7 @@ export default class VaultCrdtSyncPlugin extends Plugin {
 				registerCommands(this, {
 					getVaultSync: () => this.vaultSync,
 					getConnectionController: () => this.connectionController,
-					getDiagnosticsService: () => this.lab?.diagnosticsService as import("./lab/diagnostics/diagnosticsService").DiagnosticsService ?? null,
+					getDiagnosticsService: () => this.lab?.diagnosticsService as import("./telemetry/diagnostics/diagnosticsService").DiagnosticsService ?? null,
 					getSnapshotService: () => this.snapshotService,
 					getFilesNeedingAttentionText: () => this.buildFilesNeedingAttentionText(),
 					getUntrackedFileCount: () => this.reconciliationController.untrackedFileCount,
@@ -1579,11 +1572,11 @@ export default class VaultCrdtSyncPlugin extends Plugin {
 		this.traceRuntime?.record(source, msg, details);
 	}
 
-	private recordFlightEvent(event: import("./lab/debug/flightEvents").FlightEventInput): void {
+	private recordFlightEvent(event: import("./telemetry/debug/flightEvents").FlightEventInput): void {
 		this.lab?.recordFlightEvent(event);
 	}
 
-	private recordFlightPathEvent(event: ProductFlightPathEventInput | import("./lab/debug/flightEvents").FlightPathEventInput): void {
+	private recordFlightPathEvent(event: ProductFlightPathEventInput | import("./telemetry/debug/flightEvents").FlightPathEventInput): void {
 		this.lab?.recordFlightPathEvent(event);
 	}
 
@@ -2083,7 +2076,7 @@ export default class VaultCrdtSyncPlugin extends Plugin {
 			app: this.app,
 			vaultSync: this.vaultSync,
 			settings: this.settings,
-			diagnosticsService: this.lab?.diagnosticsService as import("./lab/diagnostics/diagnosticsService").DiagnosticsService ?? null,
+			diagnosticsService: this.lab?.diagnosticsService as import("./telemetry/diagnostics/diagnosticsService").DiagnosticsService ?? null,
 			log: (msg) => this.log(msg),
 			runReconciliation: async () => {
 				const mode = this.vaultSync?.getSafeReconcileMode();

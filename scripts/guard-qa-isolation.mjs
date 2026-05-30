@@ -15,10 +15,12 @@
  *
  *   Telemetry (Observer) code must NOT import:
  *   - qaDebugApi (Puppeteer mutation API)
- *   - installLabRuntime (Puppeteer entry — not built into telemetry.js)
  *   - vfsTortureTest (Puppeteer VFS mutation)
  *   - scenarioStateController (Puppeteer scenario mutation)
  *   - YaosUnsafeQaPort
+ *
+ * Note: installPuppeteerRuntime.ts (formerly installLabRuntime) was deleted
+ * in P4A — it was a dead export with no callers. Removed from this guard.
  *
  * Allowed:
  *   - qaDebugMode (settings flag check — this gates behavior, not imports)
@@ -37,7 +39,6 @@ const SYNC_RUNTIME_FORBIDDEN = [
 
 const TELEMETRY_FORBIDDEN = [
 	/from\s+["'].*qaDebugApi/,
-	/from\s+["'].*installLabRuntime/,
 	/from\s+["'].*vfsTortureTest/,
 	/from\s+["'].*scenarioStateController/,
 	/from\s+["'].*yaosUnsafeQaPort/,

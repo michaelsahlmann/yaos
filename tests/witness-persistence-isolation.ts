@@ -10,8 +10,8 @@
  */
 
 import assert from "node:assert/strict";
-import { DeviceWitnessTracker } from "../src/lab/diagnostics/deviceWitnessTracker";
-import type { WitnessTrackerConfig } from "../src/lab/diagnostics/deviceWitnessTracker";
+import { DeviceWitnessTracker } from "../src/telemetry/diagnostics/deviceWitnessTracker";
+import type { WitnessTrackerConfig } from "../src/telemetry/diagnostics/deviceWitnessTracker";
 
 let passed = 0;
 let failed = 0;
@@ -100,7 +100,7 @@ test("checkpoint_path_inside_vault divergence fires at most once per session", a
 	// The tracker itself doesn't emit checkpoint_path_inside_vault — that's emitted
 	// by the plugin when the path check fails. We verify the DivergenceReason exists.
 	// The actual emission is tested via the guard script.
-	const { DivergenceReason: _unused } = await import("../src/lab/diagnostics/deviceWitnessTracker").then((m) => ({ DivergenceReason: m }));
+	const { DivergenceReason: _unused } = await import("../src/telemetry/diagnostics/deviceWitnessTracker").then((m) => ({ DivergenceReason: m }));
 	// Just verify the type exists in the module
 	assert.ok(true, "DivergenceReason type includes checkpoint_path_inside_vault");
 	tracker.dispose();
@@ -108,7 +108,7 @@ test("checkpoint_path_inside_vault divergence fires at most once per session", a
 
 test("deviceWitnessTracker.ts contains no vault.adapter.write calls (static guard)", async () => {
 	const { readFileSync } = await import("node:fs");
-	const src = readFileSync("src/lab/diagnostics/deviceWitnessTracker.ts", "utf-8");
+	const src = readFileSync("src/telemetry/diagnostics/deviceWitnessTracker.ts", "utf-8");
 	const forbidden = ["vault.adapter.write", "vault.create", "vault.modify"];
 	for (const f of forbidden) {
 		assert.ok(!src.includes(f), `Forbidden call found in deviceWitnessTracker.ts: ${f}`);

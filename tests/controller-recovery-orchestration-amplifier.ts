@@ -32,7 +32,7 @@ import {
 	FLIGHT_TAXONOMY_VERSION,
 	type FlightEventInput,
 	type FlightPathEventInput,
-} from "../src/lab/debug/flightEvents";
+} from "../src/telemetry/debug/flightEvents";
 
 let passed = 0;
 let failed = 0;

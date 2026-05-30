@@ -1,4 +1,4 @@
-import { PersistentTraceLogger } from "../src/lab/debug/trace";
+import { PersistentTraceLogger } from "../src/telemetry/debug/trace";
 
 let passed = 0;
 let failed = 0;

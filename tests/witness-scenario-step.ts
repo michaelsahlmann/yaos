@@ -15,8 +15,8 @@
  */
 
 import assert from "node:assert/strict";
-import { DeviceWitnessTracker } from "../src/lab/diagnostics/deviceWitnessTracker";
-import type { WitnessTrackerConfig } from "../src/lab/diagnostics/deviceWitnessTracker";
+import { DeviceWitnessTracker } from "../src/telemetry/diagnostics/deviceWitnessTracker";
+import type { WitnessTrackerConfig } from "../src/telemetry/diagnostics/deviceWitnessTracker";
 import { ScenarioStateController } from "../qa/harness/scenarioStateController";
 
 let passed = 0;

@@ -124,7 +124,7 @@ import {
 	FLIGHT_TAXONOMY_VERSION,
 	type FlightEventInput,
 	type FlightPathEventInput,
-} from "../src/lab/debug/flightEvents";
+} from "../src/telemetry/debug/flightEvents";
 
 // -------------------------------------------------------------------
 // Assertion harness (matches tests/reconciliation-safety-brake.ts)

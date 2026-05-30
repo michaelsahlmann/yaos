@@ -9,7 +9,7 @@
  *   - settings access
  *   - read-only product state snapshots
  *   - identity / hashing helpers
- *   - lifecycle hooks (cleanup, logging, API mount/unmount)
+ *   - lifecycle hooks (cleanup, logging)
  *
  * FORBIDDEN in this interface:
  *   forceCrdtContent, forceSyncFileFromDisk, setScenarioRunId,
@@ -86,9 +86,6 @@ export interface TelemetryRuntimeHost {
 	sha256Hex(text: string): Promise<string>;
 	getPluginVersion(): string;
 	isMarkdownPathSyncable(path: string): boolean;
-	/** Called by telemetry when the QA debug API is mounted/unmounted. */
-	onTelemetryApiMounted(api: unknown): void;
-	onTelemetryApiUnmounted(): void;
 	/** Register a cleanup to run on plugin unload. */
 	registerCleanup(cleanup: () => void): void;
 	log(msg: string): void;

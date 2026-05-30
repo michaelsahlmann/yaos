@@ -10,9 +10,9 @@ import type { VaultSyncSettings } from "../../src/settings";
 import type { VaultSync } from "../../src/sync/vaultSync";
 import type { ReconciliationController } from "../../src/runtime/reconciliationController";
 import type { EditorWorkspaceOrchestrator } from "../../src/runtime/editorWorkspaceOrchestrator";
-import type { DiagnosticsService } from "../../src/lab/diagnostics/diagnosticsService";
+import type { DiagnosticsService } from "../../src/telemetry/diagnostics/diagnosticsService";
 import type { BlobSyncManager } from "../../src/sync/blobSync";
-import type { TraceHttpContext } from "../../src/lab/debug/trace";
+import type { TraceHttpContext } from "../../src/telemetry/debug/trace";
 
 export interface VfsTortureTestContext {
 	app: App;

@@ -18,9 +18,9 @@ import { Notice } from "obsidian";
 import type { VaultSync } from "../../src/sync/vaultSync";
 import type { ReconciliationController } from "../../src/runtime/reconciliationController";
 import type { ConnectionController } from "../../src/runtime/connectionController";
-import type { FlightTraceController } from "../../src/lab/debug/flightTraceController";
+import type { FlightTraceController } from "../../src/telemetry/debug/flightTraceController";
 import type { EditorBindingManager } from "../../src/sync/editorBinding";
-import { FLIGHT_KIND } from "../../src/lab/debug/flightEvents";
+import { FLIGHT_KIND } from "../../src/telemetry/debug/flightEvents";
 import { yTextToString } from "../../src/utils/format";
 import { forceReplaceYText } from "../../src/sync/diff";
 
@@ -227,7 +227,7 @@ export interface YaosQaDebugApi {
 	 * Phase 2: Read the in-memory witness buffer (for cross-device primitives).
 	 * Returns undefined if no tracker is active.
 	 */
-	getWitnessBuffer?(): ReadonlyArray<import("../../src/lab/diagnostics/deviceWitnessTracker").WitnessBufferEntry> | undefined;
+	getWitnessBuffer?(): ReadonlyArray<import("../../src/telemetry/diagnostics/deviceWitnessTracker").WitnessBufferEntry> | undefined;
 
 	/**
 	 * Phase 2: Current local witness seq (for seq-anchoring in cross-device primitives).
@@ -333,7 +333,7 @@ interface PluginHandle {
 	runReconciliation(): Promise<void>;
 	disconnectProvider(reason?: string): void;
 	connectProvider(reason?: string): void;
-	getDeviceWitnessTracker?(): import("../../src/lab/diagnostics/deviceWitnessTracker").DeviceWitnessTracker | null;
+	getDeviceWitnessTracker?(): import("../../src/telemetry/diagnostics/deviceWitnessTracker").DeviceWitnessTracker | null;
 	/** Scenario state controller (Puppeteer-owned). */
 	getScenarioController?(): import("./scenarioStateController").ScenarioStateController | null;
 	/** SHA-256 hash of the active qaTraceSecret, computed at trace start. */

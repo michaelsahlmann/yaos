@@ -57,7 +57,7 @@ import {
 	FLIGHT_KIND,
 	type FlightEventInput,
 	type FlightPathEventInput,
-} from "../src/lab/debug/flightEvents";
+} from "../src/telemetry/debug/flightEvents";
 import {
 	ORIGIN_DISK_SYNC_RECOVER_BOUND,
 	ORIGIN_DISK_SYNC_OPEN_IDLE_RECOVER,

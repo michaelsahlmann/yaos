@@ -11,7 +11,7 @@
  * Never import this from the telemetry runtime or product code.
  */
 
-import type { ScenarioContext } from "../../src/lab/diagnostics/deviceWitnessTracker";
+import type { ScenarioContext } from "../../src/telemetry/diagnostics/deviceWitnessTracker";
 
 export class ScenarioStateController implements ScenarioContext {
 	scenarioRunId: string | null = null;

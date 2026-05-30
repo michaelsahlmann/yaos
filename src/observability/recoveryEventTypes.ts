@@ -2,7 +2,7 @@
  * Product-owned recovery event types.
  *
  * These types describe the payload shapes for recovery.skipped events emitted
- * by ReconciliationController. They live here (not in lab/debug) because product
+ * by ReconciliationController. They live here (not in telemetry/debug) because product
  * runtime code constructs and references them directly.
  *
  * The lab layer imports these when building flight event schemas.

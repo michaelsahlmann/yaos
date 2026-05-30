@@ -2,7 +2,7 @@
  * TraceLoggerPort — product-safe interface for a persistent trace logger.
  *
  * TraceRuntimeController depends only on this interface.
- * The concrete implementation (PersistentTraceLogger) lives in src/lab/debug/trace.ts
+ * The concrete implementation (PersistentTraceLogger) lives in src/telemetry/debug/trace.ts
  * and is injected by the lab runtime when settings.debug is true.
  */
 

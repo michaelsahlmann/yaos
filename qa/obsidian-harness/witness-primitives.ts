@@ -17,7 +17,7 @@
  */
 
 import type { YaosQaDebugApi } from "../harness/qaDebugApi";
-import type { WitnessBufferEntry } from "../../src/lab/diagnostics/deviceWitnessTracker";
+import type { WitnessBufferEntry } from "../../src/telemetry/diagnostics/deviceWitnessTracker";
 
 export type DeviceId = string;
 

@@ -1,5 +1,5 @@
 import { Notice, type Plugin } from "obsidian";
-import type { DiagnosticsService } from "./lab/diagnostics/diagnosticsService";
+import type { DiagnosticsService } from "./telemetry/diagnostics/diagnosticsService";
 import type { ConnectionController } from "./runtime/connectionController";
 import type { SnapshotService } from "./snapshots/snapshotService";
 import type { ReconcileMode, VaultSync } from "./sync/vaultSync";

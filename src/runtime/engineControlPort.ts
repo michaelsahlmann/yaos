@@ -11,7 +11,7 @@
  * API surface. It is passed at runtime only through the Puppeteer harness path
  * (settings.qaDebugMode). Normal production users never receive it.
  *
- * Do not expose this through TelemetryRuntimeHost or LabRuntimeHost.
+ * Do not expose this through TelemetryRuntimeHost.
  * Do not mount on window. Do not ship as a product command.
  */
 
