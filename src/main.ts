@@ -406,11 +406,27 @@ export default class VaultCrdtSyncPlugin extends Plugin {
 		}
 
 		// Install telemetry runtime when debug or qaDebugMode is enabled.
-		// Dynamic import keeps telemetry code out of the product bundle on normal startup.
+		// Dynamic load keeps telemetry code out of the product bundle on normal startup.
 		if (this.settings.debug || this.settings.qaDebugMode) {
-			// eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-			const telemetryBundlePath = `${__dirname}/telemetry.js`;
-			const { installTelemetryRuntime } = (await import(telemetryBundlePath)) as typeof import("./telemetry/installTelemetryRuntime");
+			// Load telemetry.js by reading the file and evaluating it in the current
+			// module scope.  This is necessary because:
+			//   - import() in Obsidian's renderer uses app://obsidian.md scheme, which
+			//     cannot serve arbitrary filesystem paths outside the ASAR bundle.
+			//   - require() loads the file but the sub-module's own require doesn't
+			//     have Obsidian's patched require in scope, so require("obsidian") fails.
+			// Evaluating with new Function() and the current require passes Obsidian's
+			// patched require to the telemetry module so it can resolve "obsidian".
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any
+			const pluginDir = `${(this.app.vault.adapter as any).basePath}/${this.manifest.dir}`;
+			const telemetryBundlePath = `${pluginDir}/telemetry.js`;
+			// eslint-disable-next-line @typescript-eslint/no-require-imports
+			const fs = require("fs") as typeof import("fs");
+			const telemetryCode = fs.readFileSync(telemetryBundlePath, "utf-8");
+			const telemetryModule = { exports: {} as Record<string, unknown> };
+			// eslint-disable-next-line no-new-func, @typescript-eslint/no-implied-eval
+			const telemetryFn = new Function("require", "module", "exports", "__filename", "__dirname", telemetryCode);
+			telemetryFn(require, telemetryModule, telemetryModule.exports, telemetryBundlePath, pluginDir);
+			const { installTelemetryRuntime } = telemetryModule.exports as typeof import("./telemetry/installTelemetryRuntime");
 			this.lab = await installTelemetryRuntime({
 				app: this.app,
 				getSettings: () => this.settings,
