@@ -31,7 +31,7 @@ import {
 	FLIGHT_TAXONOMY_VERSION,
 	type FlightEventInput,
 	type FlightPathEventInput,
-} from "../src/debug/flightEvents";
+} from "../src/lab/debug/flightEvents";
 import {
 	ORIGIN_DISK_SYNC_RECOVER_BOUND,
 	isLocalOrigin,
@@ -658,12 +658,12 @@ console.log("\n--- Test 8: source-grep regressions on EditorBindingManager emit 
 
 	// Constructor accepts the optional flight callback.
 	assert(
-		src.includes("private recordFlightPathEvent?: (event: FlightPathEventInput) => void"),
+		src.includes("private recordFlightPathEvent?: (event: ProductFlightPathEventInput) => void"),
 		"constructor accepts optional recordFlightPathEvent callback",
 	);
 	assert(
-		src.includes('import { FLIGHT_KIND, type FlightPathEventInput } from "../debug/flightEvents"'),
-		"FLIGHT_KIND and FlightPathEventInput imported",
+		src.includes('import type { ProductFlightPathEventInput } from "../observability/traceSink"'),
+		"ProductFlightPathEventInput imported from observability",
 	);
 
 	// applyBinding emits editor.repair.applied for action==="repair" only.
@@ -673,8 +673,8 @@ console.log("\n--- Test 8: source-grep regressions on EditorBindingManager emit 
 	assert(applyBindingIdx > 0, "applyBinding method present");
 	const applyBindingTail = src.slice(applyBindingIdx, applyBindingIdx + 4500);
 	assert(
-		applyBindingTail.includes("FLIGHT_KIND.editorRepairApplied"),
-		"applyBinding emits FLIGHT_KIND.editorRepairApplied",
+		applyBindingTail.includes("PRODUCT_EVENT_KIND.editorRepairApplied"),
+		"applyBinding emits PRODUCT_EVENT_KIND.editorRepairApplied",
 	);
 	assert(
 		applyBindingTail.includes('if (action === "repair")'),
@@ -691,12 +691,12 @@ console.log("\n--- Test 8: source-grep regressions on EditorBindingManager emit 
 	assert(healIdx > 0, "heal method present");
 	const healBody = src.slice(healIdx, healIdx + 2500);
 	const applyDiffIdx = healBody.indexOf("applyDiffToYText(target.ytext, crdtContent, currentContent, ORIGIN_EDITOR_HEALTH_HEAL)");
-	const healEmitIdx = healBody.indexOf("FLIGHT_KIND.editorHealApplied");
+	const healEmitIdx = healBody.indexOf("PRODUCT_EVENT_KIND.editorHealApplied");
 	assert(applyDiffIdx > 0, "heal() calls applyDiffToYText with ORIGIN_EDITOR_HEALTH_HEAL");
-	assert(healEmitIdx > 0, "heal() emits FLIGHT_KIND.editorHealApplied");
+	assert(healEmitIdx > 0, "heal() emits PRODUCT_EVENT_KIND.editorHealApplied");
 	assert(
 		healEmitIdx > applyDiffIdx,
-		"editor.heal.applied emit follows applyDiffToYText",
+		"PRODUCT_EVENT_KIND.editorHealApplied emit follows applyDiffToYText",
 	);
 	// editor.heal.applied is NOT gated on the diff branch — the emit must
 	// be after the if (diffApplied) block, not inside it. We assert this by
@@ -728,7 +728,7 @@ console.log("\n--- Test 8: source-grep regressions on EditorBindingManager emit 
 	assert(closeIdx > 0, "heal() if(diffApplied) block closing brace found");
 	assert(
 		healEmitIdx > closeIdx,
-		"editor.heal.applied emit is OUTSIDE if(diffApplied) block (fires on every successful entry)",
+		"PRODUCT_EVENT_KIND.editorHealApplied emit is OUTSIDE if(diffApplied) block (fires on every successful entry)",
 	);
 }
 

@@ -11,11 +11,8 @@ if you want to view the source, please visit the github repository of this plugi
 
 const prod = (process.argv[2] === "production");
 
-const context = await esbuild.context({
-	banner: {
-		js: banner,
-	},
-	entryPoints: ["src/main.ts"],
+const sharedConfig = {
+	banner: { js: banner },
 	bundle: true,
 	external: [
 		"obsidian",
@@ -40,13 +37,35 @@ const context = await esbuild.context({
 	logLevel: "info",
 	sourcemap: prod ? false : "inline",
 	treeShaking: true,
-	outfile: "main.js",
 	minify: prod,
+};
+
+// Product bundle — must not contain lab machinery
+const mainContext = await esbuild.context({
+	...sharedConfig,
+	entryPoints: ["src/main.ts"],
+	outfile: "main.js",
+});
+
+// Telemetry/Observer bundle — FlightRecorder, DeviceWitnessTracker, DiagnosticsService
+// Loaded dynamically by main.ts only when settings.debug or settings.qaDebugMode.
+// Must NOT contain VFS torture, scenario steppers, unsafe CRDT/sync, network holds,
+// or any mutation harness code. Mutation harness (Puppeteer) lives in qa/.
+const telemetryContext = await esbuild.context({
+	...sharedConfig,
+	entryPoints: ["src/telemetry/installTelemetryRuntime.ts"],
+	outfile: "telemetry.js",
 });
 
 if (prod) {
-	await context.rebuild();
+	await Promise.all([
+		mainContext.rebuild(),
+		telemetryContext.rebuild(),
+	]);
 	process.exit(0);
 } else {
-	await context.watch();
+	await Promise.all([
+		mainContext.watch(),
+		telemetryContext.watch(),
+	]);
 }

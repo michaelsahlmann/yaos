@@ -9,13 +9,13 @@
  */
 
 import assert from "node:assert/strict";
-import { DeviceWitnessTracker } from "../src/diagnostics/deviceWitnessTracker.js";
+import { DeviceWitnessTracker } from "../src/lab/diagnostics/deviceWitnessTracker.js";
 import type {
 	WitnessTrackerConfig,
 	EditorSampleKind,
 	WitnessBufferEntry,
-} from "../src/diagnostics/deviceWitnessTracker.js";
-import type { FlightSink, TraceContext } from "../src/debug/flightEvents.js";
+} from "../src/lab/diagnostics/deviceWitnessTracker.js";
+import type { FlightSink, TraceContext } from "../src/lab/debug/flightEvents.js";
 
 // -----------------------------------------------------------------------
 // Test harness helpers

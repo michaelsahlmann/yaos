@@ -42,6 +42,10 @@ codex-md.py
 # QA run artifacts (flight traces, manifests, reports)
 qa-runs/
 
+# QA harness build output (compiled from .ts by qa/obsidian-harness/esbuild.mjs)
+qa/**/*.js
+qa/**/*.js.map
+
 # TypeScript compilation artifacts (compiled .js next to .ts source)
 # Build outputs are not committed; only .ts source is tracked.
 src/debug/*.js
@@ -59,7 +63,8 @@ review_25hash.json
 # Local working files (not for public repo)
 rca/
 QA/
-qa/
+# qa/ harness source IS tracked (canonical Puppeteer harness, scenarios, controllers)
+# qa-runs/ are ignored above (generated flight traces, run artifacts, evidence bundles)
 tools/
 .agents/
 .codex/

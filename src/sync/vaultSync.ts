@@ -5,7 +5,9 @@ import { normalizePath } from "obsidian";
 import { type FileMeta, type BlobRef, type BlobMeta, type BlobTombstone } from "../types";
 import { ORIGIN_SEED } from "./origins";
 import type { VaultSyncSettings } from "../settings";
-import type { TraceHttpContext, TraceRecord } from "../debug/trace";
+import type { TraceHttpContext, TraceRecord } from "../observability/traceContext";
+import type { ProductFlightPathEventInput } from "../observability/traceSink";
+import { PRODUCT_EVENT_KIND } from "../observability/productEventKinds";
 import { randomBase64Url } from "../utils/base64url";
 import { formatUnknown } from "../utils/format";
 import { UpdateTracker } from "./updateTracker";
@@ -17,8 +19,6 @@ import {
 	type SvEchoCounters,
 } from "./svEchoMessage";
 import type { CandidateStore, ScopeKey, ScopeMetadata } from "./candidateStore";
-import { FLIGHT_KIND } from "../debug/flightEvents";
-import type { FlightPathEventInput } from "../debug/flightEvents";
 import { TICKET_REFRESH_BUFFER_MS, patchTicketInUrl } from "./socketTicket";
 
 /** Current schema version. Stored in sys.schemaVersion. */
@@ -189,7 +189,7 @@ export class VaultSync {
 	private _eventRing: Array<{ ts: string; msg: string }> = [];
 	private readonly trace?: TraceRecord;
 	private readonly onFlightEvent?: (event: Record<string, unknown>) => void;
-	private readonly onFlightPathEvent?: (event: FlightPathEventInput) => void;
+	private readonly onFlightPathEvent?: (event: ProductFlightPathEventInput) => void;
 
 	/**
 	 * Stored callback for obtaining (and force-refreshing) short-lived tickets.
@@ -212,7 +212,7 @@ export class VaultSync {
 			traceContext?: TraceHttpContext;
 			trace?: TraceRecord;
 			onFlightEvent?: (event: Record<string, unknown>) => void;
-			onFlightPathEvent?: (event: FlightPathEventInput) => void;
+			onFlightPathEvent?: (event: ProductFlightPathEventInput) => void;
 			/**
 			 * Optional callback returning a short-lived WebSocket ticket.
 			 * Called once during initial connection via async params().
@@ -1186,7 +1186,7 @@ export class VaultSync {
 			});
 			this.onFlightPathEvent?.({
 				priority: "critical",
-				kind: FLIGHT_KIND.crdtFileRevived,
+				kind: PRODUCT_EVENT_KIND.crdtFileRevived,
 				severity: "info",
 				scope: "file",
 				source: "vaultSync",
@@ -1226,14 +1226,14 @@ export class VaultSync {
 		this._textToFileId.set(ytext, fileId);
 		this.onFlightPathEvent?.({
 			priority: "important",
-			kind: FLIGHT_KIND.crdtFileCreated,
+			kind: PRODUCT_EVENT_KIND.crdtFileCreated,
 			severity: "info",
 			scope: "file",
 			source: "vaultSync",
 			layer: "crdt",
 			path,
-			fileId,
 			opId,
+			data: { fileId },
 		});
 		return ytext;
 	}
@@ -1521,14 +1521,13 @@ export class VaultSync {
 		for (const { newPath, fileId } of renamedIds) {
 			this.onFlightPathEvent?.({
 				priority: "important",
-				kind: FLIGHT_KIND.crdtFileRenamed,
+				kind: PRODUCT_EVENT_KIND.crdtFileRenamed,
 				severity: "info",
 				scope: "file",
 				source: "vaultSync",
 				layer: "crdt",
 				path: newPath,
-				fileId,
-				data: { batchSize: batch.size },
+				data: { fileId, batchSize: batch.size },
 			});
 		}
 
@@ -1627,14 +1626,14 @@ export class VaultSync {
 		});
 		this.onFlightPathEvent?.({
 			priority: "critical",
-			kind: FLIGHT_KIND.crdtFileTombstoned,
+			kind: PRODUCT_EVENT_KIND.crdtFileTombstoned,
 			severity: "info",
 			scope: "file",
 			source: "vaultSync",
 			layer: "crdt",
 			path: resolvedPath,
-			fileId,
 			opId,
+			data: { fileId },
 		});
 
 		this.log(`handleDelete: "${resolvedPath}" marked deleted (id=${fileId})`);

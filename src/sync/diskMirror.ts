@@ -2,7 +2,8 @@ import { type App, arrayBufferToHex, MarkdownView, TFile, normalizePath } from "
 import * as Y from "yjs";
 import type { VaultSync } from "./vaultSync";
 import type { EditorBindingManager } from "./editorBinding";
-import type { TraceRecord } from "../debug/trace";
+import type { TraceRecord } from "../observability/traceContext";
+import { PRODUCT_EVENT_KIND } from "../observability/productEventKinds";
 import { formatUnknown, yTextToString } from "../utils/format";
 import {
 	isFrontmatterBlocked,
@@ -514,7 +515,7 @@ export class DiskMirror {
 				this._onDiskWriteCallback?.(normalized, await contentBaselineHash(content));
 				this._flightEventHandler?.({
 					priority: "important",
-					kind: "disk.write.ok",
+					kind: PRODUCT_EVENT_KIND.diskWriteOk,
 					severity: "info",
 					scope: "file",
 					source: "diskMirror",
@@ -543,7 +544,7 @@ export class DiskMirror {
 				this._onDiskWriteCallback?.(normalized, await contentBaselineHash(content));
 				this._flightEventHandler?.({
 					priority: "important",
-					kind: "disk.write.ok",
+					kind: PRODUCT_EVENT_KIND.diskWriteOk,
 					severity: "info",
 					scope: "file",
 					source: "diskMirror",
@@ -556,7 +557,7 @@ export class DiskMirror {
 			console.error(`[yaos] flushWrite failed for "${path}":`, err);
 			this._flightEventHandler?.({
 				priority: "critical",
-				kind: "disk.write.failed",
+				kind: PRODUCT_EVENT_KIND.diskWriteFailed,
 				severity: "error",
 				scope: "file",
 				source: "diskMirror",
@@ -1259,7 +1260,7 @@ export class DiskMirror {
 			});
 			this._flightEventHandler?.({
 				priority: "critical",
-				kind: "disk.event.not_suppressed",
+				kind: PRODUCT_EVENT_KIND.diskEventNotSuppressed,
 				severity: "warn",
 				scope: "file",
 				source: "diskMirror",
@@ -1290,7 +1291,7 @@ export class DiskMirror {
 			});
 			this._flightEventHandler?.({
 				priority: "critical",
-				kind: "disk.event.not_suppressed",
+				kind: PRODUCT_EVENT_KIND.diskEventNotSuppressed,
 				severity: "warn",
 				scope: "file",
 				source: "diskMirror",
@@ -1349,7 +1350,7 @@ export class DiskMirror {
 		});
 		this._flightEventHandler?.({
 			priority: "critical",
-			kind: "disk.event.not_suppressed",
+			kind: PRODUCT_EVENT_KIND.diskEventNotSuppressed,
 			severity: "warn",
 			scope: "file",
 			source: "diskMirror",

@@ -9,8 +9,8 @@
  */
 
 import assert from "node:assert/strict";
-import { DeviceWitnessTracker } from "../src/diagnostics/deviceWitnessTracker";
-import type { WitnessTrackerConfig } from "../src/diagnostics/deviceWitnessTracker";
+import { DeviceWitnessTracker } from "../src/lab/diagnostics/deviceWitnessTracker";
+import type { WitnessTrackerConfig } from "../src/lab/diagnostics/deviceWitnessTracker";
 
 let passed = 0;
 let failed = 0;

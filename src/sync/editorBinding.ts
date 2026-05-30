@@ -5,9 +5,10 @@ import * as Y from "yjs";
 import { Notice, type MarkdownView } from "obsidian";
 import type { VaultSync } from "./vaultSync";
 import { applyDiffToYText } from "./diff";
-import type { TraceRecord } from "../debug/trace";
+import type { TraceRecord } from "../observability/traceContext";
+import type { ProductFlightPathEventInput } from "../observability/traceSink";
+import { PRODUCT_EVENT_KIND } from "../observability/productEventKinds";
 import { ORIGIN_EDITOR_HEALTH_HEAL } from "./origins";
-import { FLIGHT_KIND, type FlightPathEventInput } from "../debug/flightEvents";
 
 /**
  * Manages per-editor CM6 bindings via yCollab.
@@ -113,7 +114,7 @@ export class EditorBindingManager {
 		private vaultSync: VaultSync,
 		debug: boolean,
 		private trace?: TraceRecord,
-		private recordFlightPathEvent?: (event: FlightPathEventInput) => void,
+		private recordFlightPathEvent?: (event: ProductFlightPathEventInput) => void,
 	) {
 		this.debug = debug;
 	}
@@ -328,7 +329,7 @@ export class EditorBindingManager {
 		// .kiro/specs/controller-recovery-orchestration/requirements.md R5.
 		this.recordFlightPathEvent?.({
 			priority: "important",
-			kind: FLIGHT_KIND.editorHealApplied,
+			kind: PRODUCT_EVENT_KIND.editorHealApplied,
 			severity: "info",
 			scope: "file",
 			source: "editorBinding",
@@ -1090,7 +1091,7 @@ export class EditorBindingManager {
 		if (action === "repair") {
 			this.recordFlightPathEvent?.({
 				priority: "important",
-				kind: FLIGHT_KIND.editorRepairApplied,
+				kind: PRODUCT_EVENT_KIND.editorRepairApplied,
 				severity: "info",
 				scope: "file",
 				source: "editorBinding",

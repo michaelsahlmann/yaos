@@ -22,7 +22,7 @@ if (typeof globalThis.crypto === "undefined") {
 	globalThis.crypto = webcrypto;
 }
 
-const redactorModule = await import("../src/diagnostics/pathRedactor.ts");
+const redactorModule = await import("../src/lab/diagnostics/pathRedactor.ts");
 const redactorExports = redactorModule.default ?? redactorModule;
 const { createPathRedactor, createPassthroughRedactor, generateBundleSalt } = redactorExports;
 

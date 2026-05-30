@@ -13,13 +13,16 @@ import type { ReconcileMode, VaultSync } from "../sync/vaultSync";
 import type { VaultSyncSettings } from "../settings";
 import type { RuntimeConfig } from "./runtimeConfig";
 import type { EditorBindingManager } from "../sync/editorBinding";
-import { FLIGHT_KIND } from "../debug/flightEvents";
 import type {
-	FlightEventInput,
-	FlightPathEventInput,
+	ProductFlightEventInput,
+	ProductFlightPathEventInput,
+} from "../observability/traceSink";
+import { PRODUCT_EVENT_KIND } from "../observability/productEventKinds";
+// Types only — no FLIGHT_KIND enum import.
+import type {
 	FrontmatterIngestBlockBranch,
 	RecoverySkippedFrontmatterData,
-} from "../debug/flightEvents";
+} from "../observability/recoveryEventTypes";
 import {
 	applyDiffToYText,
 	applyDiffToYTextWithPostcondition,
@@ -94,8 +97,8 @@ interface ReconciliationControllerDeps {
 	refreshServerCapabilities(reason: string): Promise<void>;
 	validateOpenEditorBindings(reason: string): void;
 	onReconciled(reason: string): void;
-	recordFlightEvent?(event: FlightEventInput): void;
-	recordFlightPathEvent?(event: FlightPathEventInput): void;
+	recordFlightEvent?(event: ProductFlightEventInput): void;
+	recordFlightPathEvent?(event: ProductFlightPathEventInput): void;
 	getAwaitingFirstProviderSyncAfterStartup(): boolean;
 	setAwaitingFirstProviderSyncAfterStartup(value: boolean): void;
 	saveDiskIndex(): Promise<void>;
@@ -239,7 +242,7 @@ function traceRecoveryPostcondition(
 		// Also emit via typed FlightSink so the analyzer can detect it
 		recordFlightPathEvent?.({
 			priority: "critical",
-			kind: FLIGHT_KIND.recoveryPostconditionFailed,
+			kind: PRODUCT_EVENT_KIND.recoveryPostconditionFailed,
 			severity: "error",
 			scope: "file",
 			source: "reconciliationController",
@@ -437,7 +440,7 @@ export class ReconciliationController {
 		try {
 			this.deps.recordFlightEvent?.({
 				priority: "important",
-				kind: "reconcile.start",
+				kind: PRODUCT_EVENT_KIND.reconcileStart,
 				severity: "info",
 				scope: "vault",
 				source: "reconciliationController",
@@ -570,7 +573,7 @@ export class ReconciliationController {
 						emitDecision: () => {
 							this.deps.recordFlightPathEvent?.({
 								priority: "important",
-								kind: FLIGHT_KIND.reconcileFileDecision,
+								kind: PRODUCT_EVENT_KIND.reconcileFileDecision,
 								severity: "info",
 								scope: "file",
 								source: "reconciliationController",
@@ -622,7 +625,7 @@ export class ReconciliationController {
 			for (const conflict of result.tombstonedDiskConflicts ?? []) {
 				this.deps.recordFlightPathEvent?.({
 					priority: "important",
-					kind: FLIGHT_KIND.reconcileFileDecision,
+					kind: PRODUCT_EVENT_KIND.reconcileFileDecision,
 					severity: "info",
 					scope: "file",
 					source: "reconciliationController",
@@ -639,7 +642,7 @@ export class ReconciliationController {
 			for (const path of result.untracked) {
 				this.deps.recordFlightPathEvent?.({
 					priority: "verbose",
-					kind: FLIGHT_KIND.reconcileFileDecision,
+					kind: PRODUCT_EVENT_KIND.reconcileFileDecision,
 					severity: "info",
 					scope: "file",
 					source: "reconciliationController",
@@ -665,7 +668,7 @@ export class ReconciliationController {
 				for (const path of result.createdOnDisk) {
 					this.deps.recordFlightPathEvent?.({
 						priority: "important",
-						kind: FLIGHT_KIND.reconcileFileDecision,
+						kind: PRODUCT_EVENT_KIND.reconcileFileDecision,
 						severity: "info",
 						scope: "file",
 						source: "reconciliationController",
@@ -761,7 +764,7 @@ export class ReconciliationController {
 						// Emit flight event for the decision.
 						this.deps.recordFlightPathEvent?.({
 							priority: action.kind === "create-conflict-artifact" ? "critical" : "important",
-							kind: FLIGHT_KIND.reconcileFileDecision,
+							kind: PRODUCT_EVENT_KIND.reconcileFileDecision,
 							severity: "info",
 							scope: "file",
 							source: "reconciliationController",
@@ -971,7 +974,7 @@ export class ReconciliationController {
 
 			this.deps.recordFlightEvent?.({
 				priority: safetyBrakeTriggered ? "critical" : "important",
-				kind: safetyBrakeTriggered ? "reconcile.safety_brake.triggered" : "reconcile.complete",
+				kind: safetyBrakeTriggered ? PRODUCT_EVENT_KIND.reconcileSafetyBrakeTriggered : PRODUCT_EVENT_KIND.reconcileComplete,
 				severity: safetyBrakeTriggered ? "warn" : "info",
 				scope: "vault",
 				source: "reconciliationController",
@@ -1356,7 +1359,7 @@ export class ReconciliationController {
 					// See spec: .kiro/specs/controller-recovery-orchestration/requirements.md R2.1
 					this.deps.recordFlightPathEvent?.({
 						priority: "verbose",
-						kind: FLIGHT_KIND.recoverySkipped,
+						kind: PRODUCT_EVENT_KIND.recoverySkipped,
 						severity: "info",
 						scope: "file",
 						source: "reconciliationController",
@@ -1390,15 +1393,15 @@ export class ReconciliationController {
 				const fileId = vaultSync.getFileIdForText(existingText) ?? undefined;
 				this.deps.recordFlightPathEvent?.({
 					priority: "important",
-					kind: FLIGHT_KIND.crdtFileUpdated,
+					kind: PRODUCT_EVENT_KIND.crdtFileUpdated,
 					severity: "info",
 					scope: "file",
 					source: "reconciliationController",
 					layer: "crdt",
 					path: file.path,
 					opId,
-					fileId,
 					data: {
+						fileId,
 						originKind: "disk-sync",
 						...(coalescedOpIds && coalescedOpIds.length > 1 ? { coalescedOpIds } : {}),
 					},
@@ -1512,7 +1515,7 @@ export class ReconciliationController {
 			// See spec: .kiro/specs/controller-recovery-orchestration/requirements.md R2.2
 			this.deps.recordFlightPathEvent?.({
 				priority: "verbose",
-				kind: FLIGHT_KIND.recoverySkipped,
+				kind: PRODUCT_EVENT_KIND.recoverySkipped,
 				severity: "info",
 				scope: "file",
 				source: "reconciliationController",
@@ -1549,7 +1552,7 @@ export class ReconciliationController {
 			// See spec: .kiro/specs/controller-recovery-orchestration/requirements.md R2.1
 			this.deps.recordFlightPathEvent?.({
 				priority: "verbose",
-				kind: FLIGHT_KIND.recoverySkipped,
+				kind: PRODUCT_EVENT_KIND.recoverySkipped,
 				severity: "info",
 				scope: "file",
 				source: "reconciliationController",
@@ -1627,7 +1630,7 @@ export class ReconciliationController {
 					);
 					this.deps.recordFlightPathEvent?.({
 						priority: "verbose",
-						kind: FLIGHT_KIND.recoverySkipped,
+						kind: PRODUCT_EVENT_KIND.recoverySkipped,
 						severity: "info",
 						scope: "file",
 						source: "reconciliationController",
@@ -1678,7 +1681,7 @@ export class ReconciliationController {
 			const _localOnlyAnyUnhealthy = _localOnlyHealth.some((h) => !h.healthy);
 			this.deps.recordFlightPathEvent?.({
 				priority: "important",
-				kind: FLIGHT_KIND.recoveryDecision,
+				kind: PRODUCT_EVENT_KIND.recoveryDecision,
 				severity: "info",
 				scope: "file",
 				source: "reconciliationController",
@@ -1727,7 +1730,7 @@ export class ReconciliationController {
 				// recovery.apply.start: before the actual diff application
 				this.deps.recordFlightPathEvent?.({
 					priority: "important",
-					kind: FLIGHT_KIND.recoveryApplyStart,
+					kind: PRODUCT_EVENT_KIND.recoveryApplyStart,
 					severity: "info",
 					scope: "file",
 					source: "reconciliationController",
@@ -1757,7 +1760,7 @@ export class ReconciliationController {
 			);
 				this.deps.recordFlightPathEvent?.({
 					priority: recoveryResult.forceReplaceApplied ? "critical" : "important",
-					kind: FLIGHT_KIND.recoveryApplyDone,
+					kind: PRODUCT_EVENT_KIND.recoveryApplyDone,
 					severity: recoveryResult.finalMatchesExpected ? "info" : "warn",
 					scope: "file",
 					source: "reconciliationController",
@@ -1790,7 +1793,7 @@ export class ReconciliationController {
 				const _rsh2 = await this.deps.computeRecoveryStateHash?.(file.path, content) ?? undefined;
 				this.deps.recordFlightPathEvent?.({
 					priority: "important",
-					kind: FLIGHT_KIND.recoveryDecision,
+					kind: PRODUCT_EVENT_KIND.recoveryDecision,
 					severity: "info",
 					scope: "file",
 					source: "reconciliationController",
@@ -1814,7 +1817,7 @@ export class ReconciliationController {
 				}
 				this.deps.recordFlightPathEvent?.({
 					priority: "important",
-					kind: FLIGHT_KIND.recoveryApplyStart,
+					kind: PRODUCT_EVENT_KIND.recoveryApplyStart,
 					severity: "info",
 					scope: "file",
 					source: "reconciliationController",
@@ -1912,7 +1915,7 @@ export class ReconciliationController {
 				// See spec: .kiro/specs/controller-recovery-orchestration/requirements.md R2.3
 				this.deps.recordFlightPathEvent?.({
 					priority: "verbose",
-					kind: FLIGHT_KIND.recoverySkipped,
+					kind: PRODUCT_EVENT_KIND.recoverySkipped,
 					severity: "info",
 					scope: "file",
 					source: "reconciliationController",
@@ -1944,7 +1947,7 @@ export class ReconciliationController {
 			const _rsh3 = await this.deps.computeRecoveryStateHash?.(file.path, content) ?? undefined;
 			this.deps.recordFlightPathEvent?.({
 				priority: "important",
-				kind: FLIGHT_KIND.recoveryDecision,
+				kind: PRODUCT_EVENT_KIND.recoveryDecision,
 				severity: "info",
 				scope: "file",
 				source: "reconciliationController",
@@ -1974,7 +1977,7 @@ export class ReconciliationController {
 				}
 				this.deps.recordFlightPathEvent?.({
 					priority: "important",
-					kind: FLIGHT_KIND.recoveryApplyStart,
+					kind: PRODUCT_EVENT_KIND.recoveryApplyStart,
 					severity: "info",
 					scope: "file",
 					source: "reconciliationController",
@@ -2004,7 +2007,7 @@ export class ReconciliationController {
 			);
 				this.deps.recordFlightPathEvent?.({
 					priority: recoveryResult.forceReplaceApplied ? "critical" : "important",
-					kind: FLIGHT_KIND.recoveryApplyDone,
+					kind: PRODUCT_EVENT_KIND.recoveryApplyDone,
 					severity: recoveryResult.finalMatchesExpected ? "info" : "warn",
 					scope: "file",
 					source: "reconciliationController",
@@ -2037,7 +2040,7 @@ export class ReconciliationController {
 				const _rsh4 = await this.deps.computeRecoveryStateHash?.(file.path, content) ?? undefined;
 				this.deps.recordFlightPathEvent?.({
 					priority: "important",
-					kind: FLIGHT_KIND.recoveryDecision,
+					kind: PRODUCT_EVENT_KIND.recoveryDecision,
 					severity: "info",
 					scope: "file",
 					source: "reconciliationController",
@@ -2244,7 +2247,7 @@ export class ReconciliationController {
 		};
 		this.deps.recordFlightPathEvent?.({
 			priority: "important",
-			kind: FLIGHT_KIND.recoverySkipped,
+			kind: PRODUCT_EVENT_KIND.recoverySkipped,
 			severity: "info",
 			scope: "file",
 			source: "reconciliationController",
@@ -2299,7 +2302,7 @@ export class ReconciliationController {
 		);
 		this.deps.recordFlightPathEvent?.({
 			priority: "critical",
-			kind: FLIGHT_KIND.recoveryQuarantined,
+			kind: PRODUCT_EVENT_KIND.recoveryQuarantined,
 			severity: "warn",
 			scope: "file",
 			source: "reconciliationController",
@@ -2315,7 +2318,7 @@ export class ReconciliationController {
 		});
 		this.deps.recordFlightPathEvent?.({
 			priority: "critical",
-			kind: FLIGHT_KIND.recoveryLoopDetected,
+			kind: PRODUCT_EVENT_KIND.recoveryLoopDetected,
 			severity: "warn",
 			scope: "file",
 			source: "reconciliationController",
@@ -2397,7 +2400,7 @@ export class ReconciliationController {
 		);
 		this.deps.recordFlightPathEvent?.({
 			priority: "critical",
-			kind: FLIGHT_KIND.recoveryAmplificationQuarantined,
+			kind: PRODUCT_EVENT_KIND.recoveryAmplificationQuarantined,
 			severity: "warn",
 			scope: "file",
 			source: "reconciliationController",
@@ -2416,7 +2419,7 @@ export class ReconciliationController {
 		// see this case. See spec R3.5.
 		this.deps.recordFlightPathEvent?.({
 			priority: "critical",
-			kind: FLIGHT_KIND.recoveryLoopDetected,
+			kind: PRODUCT_EVENT_KIND.recoveryLoopDetected,
 			severity: "warn",
 			scope: "file",
 			source: "reconciliationController",
