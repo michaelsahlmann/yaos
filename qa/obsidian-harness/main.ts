@@ -238,25 +238,71 @@ export default class YaosQaHarnessPlugin extends Plugin {
 	 * TelemetryRuntimeHandle, then calls buildQaDebugApi and mounts the
 	 * result at window.__YAOS_DEBUG__.
 	 *
-	 * The product plugin ID is "yaos".  The harness requires the product plugin
-	 * to be loaded first (enforce ordering in the vault's community-plugins.json).
+	 * Guards (all must pass before mounting):
+	 *   - product plugin "yaos" is loaded
+	 *   - product.getEngineControlPort is present (confirms QA product build)
+	 *   - product.lab (TelemetryRuntimeHandle) is present (confirms qaDebugMode)
+	 *   - lab.getDeviceWitnessTracker accessor is present (confirms P4B build)
 	 *
-	 * The TelemetryRuntimeHandle is stored as `lab` (private) on the product
-	 * plugin.  We access it via `as any` — acceptable in a QA-only file.
+	 * If guards fail, a loud error is logged and no __YAOS_DEBUG__ is mounted.
+	 * waitForQaReady() will never resolve, making the failure visible immediately
+	 * rather than letting it surface as a mysterious mid-scenario crash.
+	 *
+	 * The product plugin ID is "yaos".  Enforce load order: "yaos" must appear
+	 * before "yaos-qa-harness" in the vault's community-plugins.json.
+	 *
+	 * Private fields are accessed via `as any` — acceptable in a QA-only file.
 	 */
 	private mountYaosDebugApi(): void {
 		// eslint-disable-next-line @typescript-eslint/no-explicit-any
 		const product = (this.app.plugins as any).plugins?.["yaos"] as Record<string, unknown> | undefined;
+
+		// Guard 1: product plugin must be loaded
 		if (!product) {
-			console.error("[YAOS QA] Product plugin 'yaos' not found — window.__YAOS_DEBUG__ not mounted. " +
-				"Ensure 'yaos' is listed before 'yaos-qa-harness' in community-plugins.json.");
-			new Notice("YAOS QA: product plugin not found — __YAOS_DEBUG__ unavailable.", 8000);
+			console.error(
+				"[YAOS QA] FATAL: product plugin 'yaos' not found. " +
+				"window.__YAOS_DEBUG__ will NOT be mounted. " +
+				"Ensure 'yaos' appears before 'yaos-qa-harness' in community-plugins.json.",
+			);
+			new Notice("YAOS QA FATAL: product plugin not found — __YAOS_DEBUG__ unavailable. " +
+				"Check plugin load order.", 15000);
 			return;
 		}
 
-		// Access the TelemetryRuntimeHandle stored as this.lab (private field).
+		// Guard 2: getEngineControlPort must exist (confirms QA product build, not prod main.js)
+		if (typeof (product as any).getEngineControlPort !== "function") {
+			console.error(
+				"[YAOS QA] FATAL: product plugin is missing getEngineControlPort. " +
+				"The vault is loading the production main.js instead of the QA product build. " +
+				"Run: npm run build:qa-product, then re-run qa:prepare.",
+			);
+			new Notice("YAOS QA FATAL: wrong product build — getEngineControlPort missing. " +
+				"Run npm run build:qa-product.", 15000);
+			return;
+		}
+
+		// Guard 3: product.lab must exist (confirms qaDebugMode=true and telemetry loaded)
 		// eslint-disable-next-line @typescript-eslint/no-explicit-any
 		const lab = (product as any).lab as Record<string, unknown> | null | undefined;
+		if (!lab) {
+			console.error(
+				"[YAOS QA] FATAL: product.lab (TelemetryRuntimeHandle) is null. " +
+				"The product vault settings must have qaDebugMode: true. " +
+				"Check qa/scripts/prepare-vault.ts — it must write qaDebugMode into the YAOS settings.",
+			);
+			new Notice("YAOS QA FATAL: product.lab missing — set qaDebugMode: true in YAOS settings.", 15000);
+			return;
+		}
+
+		// Guard 4: new accessor must exist (confirms P4B telemetry build)
+		if (typeof (lab as any).getDeviceWitnessTracker !== "function") {
+			console.error(
+				"[YAOS QA] FATAL: lab.getDeviceWitnessTracker is missing. " +
+				"The telemetry.js bundle is stale — run: npm run build.",
+			);
+			new Notice("YAOS QA FATAL: stale telemetry.js — run npm run build.", 15000);
+			return;
+		}
 
 		const scenarioController = this.scenarioController;
 
@@ -265,37 +311,48 @@ export default class YaosQaHarnessPlugin extends Plugin {
 			getVaultSync: () => (product as any).vaultSync ?? null,
 			getReconciliationController: () => (product as any).reconciliationController,
 			getConnectionController: () => (product as any).connectionController ?? null,
-			getFlightTraceController: () => (lab as any)?.getFlightTraceController?.() ?? null,
+			getFlightTraceController: () => (lab as any).getFlightTraceController?.() ?? null,
 			getEditorBindings: () => (product as any).editorBindings ?? null,
 			getDiagnosticsDir: () => undefined,
 			sha256Hex: (text: string) => (product as any).sha256Hex(text) as Promise<string>,
 			startQaFlightTrace: (mode?: string) =>
-				((lab as any)?.startTelemetryTrace?.(mode ?? "qa-safe") ?? Promise.resolve()) as Promise<void>,
+				((lab as any).startTelemetryTrace?.(mode ?? "qa-safe") ?? Promise.resolve()) as Promise<void>,
 			stopQaFlightTrace: () =>
-				((lab as any)?.stopTelemetryTrace?.() ?? Promise.resolve()) as Promise<void>,
+				((lab as any).stopTelemetryTrace?.() ?? Promise.resolve()) as Promise<void>,
+			// exportFlightTrace must return the written file path or null.
+			// buildQaDebugApi throws if path is null/falsy, so we call the
+			// FlightTraceController directly to get the return value.
 			exportFlightTrace: async (privacy: "safe" | "full") => {
-				if (privacy === "safe") await (lab as any)?.exportSafeFlightTrace?.();
-				else await (lab as any)?.exportFullFlightTrace?.();
-				return null;
+				const ftc = (lab as any).getFlightTraceController?.() as
+					import("../../src/telemetry/debug/flightTraceController").FlightTraceController | null;
+				if (!ftc) return null;
+				const diagService = (lab as any).diagnosticsService;
+				const diagDir = await (diagService?.ensureDiagnosticsDir?.() as Promise<string> | undefined)
+					?.catch(() => null) ?? null;
+				if (!diagDir) return null;
+				const result = await ftc.exportTrace({ requestedPrivacy: privacy, diagDir });
+				return result.ok ? result.path : null;
 			},
 			runReconciliation: async () => {
 				const rc = (product as any).reconciliationController;
 				await rc?.runReconciliation("conservative");
 			},
+			// setQaNetworkHold("offline") holds the provider offline and blocks reconnects.
+			// setQaNetworkHold("online") releases the hold and triggers reconnect.
 			disconnectProvider: () =>
 				void (product as any).connectionController?.setQaNetworkHold("offline"),
 			connectProvider: () =>
 				void (product as any).connectionController?.setQaNetworkHold("online"),
 			getDeviceWitnessTracker: () =>
-				(lab as any)?.getDeviceWitnessTracker?.() ?? null,
+				(lab as any).getDeviceWitnessTracker?.() ?? null,
 			getScenarioController: () => scenarioController,
 			getQaTraceSecretHash: () =>
-				((lab as any)?.getQaTraceSecretHash?.() ?? null) as string | null,
+				((lab as any).getQaTraceSecretHash?.() ?? null) as string | null,
 			getEngineControlPort: () => (product as any).getEngineControlPort(),
 		});
 
 		(window as unknown as Record<string, unknown>).__YAOS_DEBUG__ = debugApi;
-		console.log("[YAOS QA] window.__YAOS_DEBUG__ mounted.");
-		new Notice("YAOS: window.__YAOS_DEBUG__ is available.", 4000);
+		console.log("[YAOS QA] window.__YAOS_DEBUG__ mounted successfully.");
+		new Notice("YAOS QA: window.__YAOS_DEBUG__ is available.", 4000);
 	}
 }
